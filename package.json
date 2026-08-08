@@ -29,8 +29,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format": "prettier --write \"**/*.{js,ts,mjs,cjs}\"",
+    "format:check": "prettier --check \"**/*.{js,ts,mjs,cjs}\"",
     "test": "tsx --test test/*.test.ts",
     "coverage": "node --import tsx --test --experimental-test-coverage test/*.test.ts",
     "integrate-test": "tsx integrate-test.ts"

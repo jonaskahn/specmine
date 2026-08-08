@@ -60,15 +60,15 @@ The Anthropic provider works the same way: `createAnthropicProvider()`, or
 
 ### Options
 
-| Option      | Type          | Default                       | Meaning                                 |
-| ----------- | ------------- | ----------------------------- | --------------------------------------- |
-| `provider`  | `string`      | `"openai"`                    | `"openai"`, `"anthropic"`, or a registered name |
-| `model`     | `string`      | per-provider default          | Model identifier                        |
-| `apiKey`    | `string`      | provider env var              | Provider key                            |
-| `lang`      | `string`      | detected from input, `"en"`   | Language for extracted keys and values  |
-| `flattened` | `boolean`     | `false`                       | `true` → reduce output to leaf pairs    |
-| `timeoutMs` | `number`      | —                             | Abort the LLM call after N milliseconds |
-| `signal`    | `AbortSignal` | —                             | External abort signal                   |
+| Option      | Type          | Default                     | Meaning                                         |
+| ----------- | ------------- | --------------------------- | ----------------------------------------------- |
+| `provider`  | `string`      | `"openai"`                  | `"openai"`, `"anthropic"`, or a registered name |
+| `model`     | `string`      | per-provider default        | Model identifier                                |
+| `apiKey`    | `string`      | provider env var            | Provider key                                    |
+| `lang`      | `string`      | detected from input, `"en"` | Language for extracted keys and values          |
+| `flattened` | `boolean`     | `false`                     | `true` → reduce output to leaf pairs            |
+| `timeoutMs` | `number`      | —                           | Abort the LLM call after N milliseconds         |
+| `signal`    | `AbortSignal` | —                           | External abort signal                           |
 
 ### Output
 
