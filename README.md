@@ -63,6 +63,10 @@ const spec = await extract(new URL('file:///specs/kettle.pdf'));
 const spec = await extract(new URL('https://example.com/kettle.txt'));
 ```
 
+HTML content (a string, blob, or fetched page) is detected and converted to
+Markdown before extraction, so table- and tag-heavy product pages still
+produce clean specs:
+
 ### Zero config via env
 
 Set `SPECMINE_LLM_API_KEY` (+ optionally `SPECMINE_LLM_API_HOST` and

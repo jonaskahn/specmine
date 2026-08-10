@@ -23,6 +23,28 @@ test('accepts empty object', () => {
   assert.deepEqual(result.spec, {});
 });
 
+test('accepts structured-output envelope', () => {
+  const result = validator.validate(
+    '{"specs":[{"key":"Weight","value":"1.5 kg","children":[]},{"key":"Hardware","value":"","children":[{"key":"Power Supply","value":"12 V DC","children":[]}]}]}',
+  );
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.spec, {
+    Weight: '1.5 kg',
+    Hardware: { 'Power Supply': '12 V DC' },
+  });
+});
+
+test('accepts empty structured-output envelope', () => {
+  const result = validator.validate('{"specs":[]}');
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.spec, {});
+});
+
+test('rejects envelope with malformed item', () => {
+  const result = validator.validate('{"specs":[{"key":"Weight","value":1.5,"children":[]}]}');
+  assert.equal(result.spec, undefined);
+});
+
 test('strips markdown fences', () => {
   const result = validator.validate('```json\n{"Weight": "1.5 kg"}\n```');
   assert.deepEqual(result.errors, []);

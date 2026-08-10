@@ -274,3 +274,105 @@ test('extract() resolves apiKey-less provider options', async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test('flattened: true with inheritance: true reduces nested output to leaf pairs with path keys', async () => {
+  const { llm } = fakeLlm(['{"Hardware": {"Power Supply": "12 V DC", "Casing": "ABS plastic"}}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const spec = await extractor.extract('content', { flattened: true, inheritance: true });
+  assert.deepEqual(spec, {
+    'Hardware · Power Supply': '12 V DC',
+    'Hardware · Casing': 'ABS plastic',
+  });
+});
+
+test('flattened: true with inheritance: true flattens arbitrarily deep nesting', async () => {
+  const { llm } = fakeLlm(['{"A": {"B": {"C": "1", "D": "2"}}}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const spec = await extractor.extract('content', { flattened: true, inheritance: true });
+  assert.deepEqual(spec, { 'A · B · C': '1', 'A · B · D': '2' });
+});
+
+test('flattened: true leaves an already-flat spec unchanged', async () => {
+  const { llm } = fakeLlm(['{"Weight": "1.5 kg", "Colour": "red"}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const spec = await extractor.extract('content', { flattened: true });
+  assert.deepEqual(spec, { Weight: '1.5 kg', Colour: 'red' });
+});
+
+test('flattened: false keeps the nested shape', async () => {
+  const { llm } = fakeLlm(['{"Hardware": {"Power Supply": "12 V DC"}}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const spec = await extractor.extract('content', { flattened: false });
+  assert.deepEqual(spec, { Hardware: { 'Power Supply': '12 V DC' } });
+});
+
+test('flattened: true with inheritance: true keeps duplicate leaf keys distinct via paths', async () => {
+  const { llm } = fakeLlm(['{"Front": {"Length": "10 cm"}, "Rear": {"Length": "12 cm"}}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const spec = await extractor.extract('content', { flattened: true, inheritance: true });
+  assert.deepEqual(spec, { 'Front · Length': '10 cm', 'Rear · Length': '12 cm' });
+});
+
+test('flattened: true keeps only innermost leaf pairs by default', async () => {
+  const { llm } = fakeLlm(['{"Hardware": {"Power Supply": "12 V DC", "Casing": "ABS plastic"}}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const spec = await extractor.extract('content', { flattened: true });
+  assert.deepEqual(spec, { 'Power Supply': '12 V DC', Casing: 'ABS plastic' });
+});
+
+test('flattened: true drops all intermediate keys in deep nesting by default', async () => {
+  const { llm } = fakeLlm(['{"A": {"B": {"C": "1", "D": "2"}}}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const spec = await extractor.extract('content', { flattened: true, inheritance: false });
+  assert.deepEqual(spec, { C: '1', D: '2' });
+});
+
+test('flattened: true overwrites colliding leaf keys, last one wins', async () => {
+  const { llm } = fakeLlm(['{"Front": {"Length": "10 cm"}, "Rear": {"Length": "12 cm"}}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const spec = await extractor.extract('content', { flattened: true });
+  assert.deepEqual(spec, { Length: '12 cm' });
+});
+
+test('flattened: true keeps top-level leaves alongside innermost pairs', async () => {
+  const { llm } = fakeLlm(['{"Hardware": {"Power Supply": "12 V DC"}, "Model": "AX-1"}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const spec = await extractor.extract('content', { flattened: true });
+  assert.deepEqual(spec, { 'Power Supply': '12 V DC', Model: 'AX-1' });
+});

@@ -9,6 +9,7 @@ import type {
   LlmResponse,
 } from './provider.js';
 import { resolveSettings, type ResolvedSettings } from './settings.js';
+import { SPECS_SCHEMA } from '../spec/schema.js';
 
 export const DEFAULT_ANTHROPIC_API_HOST = 'https://api.anthropic.com';
 export const DEFAULT_ANTHROPIC_MODEL = 'haiku-4.5';
@@ -26,7 +27,7 @@ interface AnthropicMessage {
 }
 
 interface AnthropicResponse {
-  content?: Array<{ type?: string; text?: string }>;
+  content?: Array<{ type?: string; text?: string; input?: unknown }>;
 }
 
 function resolve(options: AnthropicOptions | undefined): ResolvedSettings {
@@ -97,11 +98,24 @@ export class AnthropicClient implements LlmProvider {
           ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
           ...(system ? { system } : {}),
           messages: toMessages(request.messages),
+          tools: [
+            {
+              name: 'specmine',
+              description:
+                'Extract product specifications from the input content as a structured list.',
+              input_schema: SPECS_SCHEMA,
+            },
+          ],
+          tool_choice: { type: 'tool', name: 'specmine' },
         }),
       },
       options,
     );
     const response = body as AnthropicResponse;
+    const toolUse = response.content?.find((block) => block.type === 'tool_use');
+    if (toolUse?.input !== undefined) {
+      return { content: JSON.stringify(toolUse.input) };
+    }
     const content = response.content?.find((block) => block.type === 'text')?.text;
     if (typeof content !== 'string') {
       throw new ExtractionError('LLM_ERROR', 'LLM response is missing text content');

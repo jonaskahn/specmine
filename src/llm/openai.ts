@@ -9,6 +9,7 @@ import type {
   LlmResponse,
 } from './provider.js';
 import { resolveSettings, type ResolvedSettings } from './settings.js';
+import { SPECS_SCHEMA } from '../spec/schema.js';
 
 export const DEFAULT_OPENAI_API_HOST = 'https://api.openai.com/v1';
 export const DEFAULT_OPENAI_MODEL = 'gpt-5.6-luna';
@@ -70,7 +71,14 @@ export class OpenAiClient implements LlmProvider {
           })),
           ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
           ...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
-          response_format: { type: 'json_object' },
+          response_format: {
+            type: 'json_schema',
+            json_schema: {
+              name: 'extracted_specs',
+              strict: true,
+              schema: SPECS_SCHEMA,
+            },
+          },
         }),
       },
       options,

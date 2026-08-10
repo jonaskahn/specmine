@@ -1,6 +1,6 @@
 {
   "name": "@jonaskahn/specmine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Mine product specifications (JSON) from text content or PDF files using an LLM.",
   "license": "MIT",
   "author": "jonaskahn",
@@ -41,6 +41,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.2.0",
+    "@types/turndown": "^5.0.6",
     "dotenv": "^17.4.2",
     "eslint": "^10.8.1",
     "eslint-config-prettier": "^10.1.8",
@@ -51,6 +52,8 @@
   },
   "dependencies": {
     "@firecrawl/pdf-inspector": "^1.12.0",
-    "tinyld": "^1.3.4"
+    "tinyld": "^1.3.4",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2"
   }
 }

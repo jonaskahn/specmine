@@ -43,7 +43,10 @@ test('openai sends chat/completions request with system, user and tool messages'
     messages: Array<{ role: string; content: string }>;
     temperature: number;
     max_tokens: number;
-    response_format: { type: string };
+    response_format: {
+      type: string;
+      json_schema: { name: string; strict: boolean; schema: { type: string } };
+    };
   };
   assert.equal(body.model, 'azure/gpt-5.6-luna');
   assert.deepEqual(
@@ -52,7 +55,10 @@ test('openai sends chat/completions request with system, user and tool messages'
   );
   assert.equal(body.temperature, 0);
   assert.equal(body.max_tokens, 100);
-  assert.equal(body.response_format.type, 'json_object');
+  assert.equal(body.response_format.type, 'json_schema');
+  assert.equal(body.response_format.json_schema.name, 'extracted_specs');
+  assert.equal(body.response_format.json_schema.strict, true);
+  assert.equal(body.response_format.json_schema.schema.type, 'object');
   const headers = captured.init.headers as Record<string, string>;
   assert.equal(headers.authorization, 'Bearer k');
   assert.equal(response.content, '{"ok":"1"}');
@@ -107,6 +113,8 @@ test('anthropic sends /v1/messages with system field and tool_result block', asy
     system: string;
     messages: Array<{ role: string; content: unknown }>;
     max_tokens: number;
+    tools: Array<{ name: string; input_schema: { type: string } }>;
+    tool_choice: { type: string; name: string };
   };
   assert.equal(body.system, 'sys prompt');
   assert.deepEqual(
@@ -117,10 +125,33 @@ test('anthropic sends /v1/messages with system field and tool_result block', asy
   const toolBlock = (toolMessage.content as Array<{ type: string; content: string }>)[0];
   assert.equal(toolBlock.type, 'tool_result');
   assert.equal(toolBlock.content, 'tool result');
+  assert.equal(body.tools[0]?.name, 'specmine');
+  assert.equal(body.tools[0]?.input_schema.type, 'object');
+  assert.deepEqual(body.tool_choice, { type: 'tool', name: 'specmine' });
   const headers = captured.init.headers as Record<string, string>;
   assert.equal(headers['x-api-key'], 'k');
   assert.equal(headers['anthropic-version'], '2023-06-01');
   assert.equal(response.content, '{"ok":"1"}');
+});
+
+test('anthropic returns the forced tool_use input as JSON content', async () => {
+  const captured = mockFetch({
+    content: [
+      {
+        type: 'tool_use',
+        name: 'specmine',
+        input: { specs: [{ key: 'Weight', value: '1.5 kg', children: [] }] },
+      },
+    ],
+  });
+  const client = new AnthropicClient({ apiKey: 'k' });
+  const response = await client.complete({ messages: [{ role: 'user', content: 'x' }] });
+  assert.equal(
+    response.content,
+    JSON.stringify({ specs: [{ key: 'Weight', value: '1.5 kg', children: [] }] }),
+  );
+  const body = JSON.parse(String(captured.init.body)) as { tool_choice: unknown };
+  assert.deepEqual(body.tool_choice, { type: 'tool', name: 'specmine' });
 });
 
 test('anthropic maps non-2xx to LLM_ERROR', async () => {

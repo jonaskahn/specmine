@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { ExtractionError } from '../errors.js';
 import type { ExtractInput } from '../types.js';
+import { htmlToMarkdown } from './html.js';
 import type { PdfInspector } from './pdf.js';
 
 export interface ReadResult {
@@ -18,7 +19,7 @@ export class DefaultReader implements InputReader {
 
   async read(input: ExtractInput): Promise<ReadResult> {
     if (typeof input === 'string') {
-      return { text: input, imageOnly: false };
+      return { text: htmlToMarkdown(input), imageOnly: false };
     }
     if (input instanceof URL) {
       return this.readUrl(input);
@@ -44,7 +45,7 @@ export class DefaultReader implements InputReader {
     if (await this.isPdf(blob)) {
       return this.readPdf(blob);
     }
-    return { text: await blob.text(), imageOnly: false };
+    return { text: htmlToMarkdown(await blob.text()), imageOnly: false };
   }
 
   private async isPdf(blob: Blob): Promise<boolean> {

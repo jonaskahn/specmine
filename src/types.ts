@@ -24,6 +24,8 @@ export interface ExtractOptions extends CallOptions {
   apiKey?: string;
   lang?: string;
   flattened?: boolean;
+  /** flattened mode: keep parent-key prefixes (' · ') when true, innermost leaf pairs when false. Default: false */
+  inheritance?: boolean;
 }
 
 export type ExtractInput = string | Blob | URL;

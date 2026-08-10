@@ -6,7 +6,14 @@ import { createAnthropicProvider } from './llm/anthropic.js';
 import { createOpenAiProvider } from './llm/openai.js';
 import type { LlmMessage, LlmProvider, LlmRequest } from './llm/provider.js';
 import { JsonSpecValidator, type SpecValidator } from './spec/validator.js';
-import type { ExtractInput, ExtractOptions, SpecsResult, CallOptions } from './types.js';
+import type {
+  ExtractInput,
+  ExtractOptions,
+  NestedSpecs,
+  ProductSpec,
+  SpecsResult,
+  CallOptions,
+} from './types.js';
 
 export interface Extractor {
   extract(input: ExtractInput, options?: ExtractOptions): Promise<SpecsResult>;
@@ -18,20 +25,18 @@ export interface ExtractorDependencies {
   validator: SpecValidator;
 }
 
-const SYSTEM_PROMPT = `You are a precise product-specification extraction assistant. Extract only technical specifications and measurable attributes that are explicitly stated in the given content — never infer, estimate, or fabricate a value.
-
-Focus on quantifiable features such as:
-- Dimensions
-- Weight
-- Technical specifications (e.g., processor, RAM, storage)
-- Material composition
-- Performance metrics
+const SYSTEM_PROMPT = `You are a precise product-specification extraction assistant. 
+Extract only specifications and measurable attributes that are explicitly 
+stated in the given content — never infer, assume, fabricate a value, focus on quantifiable features.
 
 Rules:
-- Respond with a single JSON object and nothing else — no prose, no markdown code fences.
+- Respond with a single JSON object and nothing else — no prose, no markdown code fences, using this exact shape:
+  {"specs":[{"key":"attribute label","value":"value as a string","children":[]}]}
+- Use "children" for grouped sub-specifications; use an empty array when an item has none.
+- Respect attribute label if existed, do not reinvent, reshape label.
 - Every value must be a string, including numbers — keep the original unit (e.g. "1.5 kg", not 1.5).
 - Use one consistent key per attribute; never create near-duplicate keys for the same fact.
-- If no specifications are found, return {}.`;
+- If no specifications are found, return {"specs":[]}.`;
 
 function languageName(lang: string): string {
   try {
@@ -44,6 +49,31 @@ function languageName(lang: string): string {
 function buildSystemPrompt(lang: string): string {
   if (lang === 'en') return SYSTEM_PROMPT;
   return `${SYSTEM_PROMPT}\n\nWrite every key and value in ${languageName(lang)}.`;
+}
+
+function flattenSpecs(specs: NestedSpecs): ProductSpec {
+  const flattened: ProductSpec = {};
+  for (const [key, value] of Object.entries(specs)) {
+    if (typeof value === 'string') {
+      flattened[key] = value;
+      continue;
+    }
+    for (const [childKey, childValue] of Object.entries(flattenSpecs(value))) {
+      flattened[`${key} · ${childKey}`] = childValue;
+    }
+  }
+  return flattened;
+}
+
+function flattenInnermostPairs(specs: NestedSpecs, out: ProductSpec = {}): ProductSpec {
+  for (const [key, value] of Object.entries(specs)) {
+    if (typeof value === 'string') {
+      out[key] = value;
+    } else {
+      flattenInnermostPairs(value, out);
+    }
+  }
+  return out;
 }
 
 export class DefaultExtractor implements Extractor {
@@ -76,7 +106,10 @@ export class DefaultExtractor implements Extractor {
     if (result.spec === undefined) {
       throw new ExtractionError('INVALID_OUTPUT', result.errors.join('; '));
     }
-    return result.spec;
+    if (options?.flattened !== true) return result.spec;
+    return options?.inheritance === true
+      ? flattenSpecs(result.spec)
+      : flattenInnermostPairs(result.spec);
   }
 }
 
