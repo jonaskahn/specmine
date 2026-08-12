@@ -5,6 +5,7 @@ import { NapiPdfInspector } from './input/napi-pdf-inspector.js';
 import { createAnthropicProvider } from './llm/anthropic.js';
 import { createOpenAiProvider } from './llm/openai.js';
 import type { LlmMessage, LlmProvider, LlmRequest } from './llm/provider.js';
+import { logger } from './log.js';
 import { JsonSpecValidator, type SpecValidator } from './spec/validator.js';
 import type {
   ExtractInput,
@@ -259,15 +260,18 @@ export class DefaultExtractor implements Extractor {
     options?: ExtractOptions,
     mode: PromptMode = 'specs',
   ): Promise<{ spec: SpecsResult; tags: TagsResult }> {
+    const log = logger();
     const readResult = await this.dependencies.reader.read(input);
     const text = readResult.text.trim();
     if (readResult.imageOnly) {
+      log.warn('Input is image only, returning empty result');
       return { spec: {}, tags: [] };
     }
     if (!text) {
       throw new ExtractionError('EMPTY_INPUT', 'Input is empty');
     }
     const lang = options?.lang ?? detectLanguage(text) ?? 'en';
+    log.info('Extraction started', { mode, lang, chars: text.length });
     const messages: LlmMessage[] = [
       { role: 'system', content: buildSystemPrompt(lang, mode) },
       { role: 'user', content: text },
@@ -282,9 +286,11 @@ export class DefaultExtractor implements Extractor {
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options?.signal !== undefined ? { signal: options.signal } : {}),
     };
+    const startedAt = Date.now();
     const response = await this.dependencies.llm.complete(request, callOptions);
     const result = this.dependencies.validator.validate(response.content);
     if (result.spec === undefined) {
+      log.error('Invalid LLM output', { errors: result.errors });
       throw new ExtractionError('INVALID_OUTPUT', result.errors.join('; '));
     }
     const spec =
@@ -293,6 +299,12 @@ export class DefaultExtractor implements Extractor {
         : options?.inheritance === true
           ? flattenSpecs(result.spec)
           : flattenInnermostPairs(result.spec);
+    log.info('Extraction complete', {
+      mode,
+      specCount: Object.keys(spec).length,
+      tagCount: result.tags.length,
+      durationMs: Date.now() - startedAt,
+    });
     return { spec, tags: normalizeTags(result.tags) };
   }
 }

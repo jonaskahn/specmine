@@ -1,4 +1,5 @@
 import { ExtractionError, isExtractionError } from '../errors.js';
+import { logger } from '../log.js';
 import type { CallOptions } from '../types.js';
 import type { LlmProvider, LlmRequest, LlmResponse } from './provider.js';
 
@@ -99,10 +100,17 @@ export class ResilientProvider implements LlmProvider {
         return response;
       } catch (error) {
         lastError = error;
+        if (isRetryable(error)) {
+          logger().warn('LLM call failed, retrying', {
+            attempt: attempt + 1,
+            maxRetries: this.settings.maxRetries,
+          });
+        }
         if (!isRetryable(error)) break;
       }
     }
     this.recordFailure();
+    logger().error('LLM retries exhausted', { attempts, error: String(lastError) });
     throw lastError;
   }
 
@@ -111,6 +119,7 @@ export class ResilientProvider implements LlmProvider {
     if (Date.now() < this.openUntil) {
       throw new ExtractionError('LLM_ERROR', 'Circuit breaker is open');
     }
+    logger().info('Circuit breaker probing', { cooldownMs: this.settings.cooldownMs });
     this.probing = true;
     this.openUntil = 0;
   }
@@ -129,6 +138,7 @@ export class ResilientProvider implements LlmProvider {
     }
     this.failures += 1;
     if (this.failures >= this.settings.failureThreshold) {
+      logger().warn('Circuit breaker opened', { cooldownMs: this.settings.cooldownMs });
       this.openUntil = Date.now() + this.settings.cooldownMs;
       this.failures = 0;
     }

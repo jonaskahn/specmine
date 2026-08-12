@@ -24,6 +24,18 @@
   "engines": {
     "node": ">=18"
   },
+  "peerDependencies": {
+    "pino": ">=9",
+    "winston": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "pino": {
+      "optional": true
+    },
+    "winston": {
+      "optional": true
+    }
+  },
   "publishConfig": {
     "access": "public",
     "provenance": true
@@ -35,8 +47,8 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{js,ts,mjs,cjs}\"",
     "format:check": "prettier --check \"**/*.{js,ts,mjs,cjs}\"",
-    "test": "tsx --test test/*.test.ts",
-    "coverage": "c8 --include src --reporter=text --check-coverage --statements 100 --branches 100 --functions 100 --lines 100 node --import tsx --test test/*.test.ts"
+    "test": "SPECMINE_LOG_LEVEL=silent tsx --test test/*.test.ts",
+    "coverage": "SPECMINE_LOG_LEVEL=silent c8 --include src --reporter=text --check-coverage --statements 100 --branches 100 --functions 100 --lines 100 node --import tsx --test test/*.test.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -46,10 +58,12 @@
     "dotenv": "^17.4.2",
     "eslint": "^10.8.1",
     "eslint-config-prettier": "^10.1.8",
+    "pino": "^10.3.1",
     "prettier": "^3.9.6",
     "tsx": "^4.23.11",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.66.0"
+    "typescript-eslint": "^8.66.0",
+    "winston": "^3.19.0"
   },
   "dependencies": {
     "@firecrawl/pdf-inspector": "^1.12.0",

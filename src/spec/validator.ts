@@ -1,3 +1,4 @@
+import { logger } from '../log.js';
 import type { NestedSpecs, SpecsResult, TagsResult } from '../types.js';
 import { envelopeToResult } from './schema.js';
 
@@ -45,10 +46,12 @@ export class JsonSpecValidator implements SpecValidator {
     try {
       parsed = JSON.parse(stripFences(raw));
     } catch {
+      logger().debug('Invalid LLM output', { errors: ['Response is not valid JSON'] });
       errors.push('Response is not valid JSON');
       return { tags: [], errors };
     }
     if (!isRecord(parsed)) {
+      logger().debug('Invalid LLM output', { errors: ['Response is not a JSON object'] });
       errors.push('Response is not a JSON object');
       return { tags: [], errors };
     }
@@ -59,6 +62,7 @@ export class JsonSpecValidator implements SpecValidator {
     if (isValidSpec(parsed, errors, '')) {
       return { spec: parsed as NestedSpecs, tags: [], errors: [] };
     }
+    logger().debug('Invalid LLM output', { errors });
     return { tags: [], errors };
   }
 }

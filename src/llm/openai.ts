@@ -1,4 +1,5 @@
 import { ExtractionError } from '../errors.js';
+import { logger } from '../log.js';
 import type { CallOptions } from '../types.js';
 import { requestJson } from './http.js';
 import type {
@@ -55,7 +56,34 @@ export class OpenAiClient implements LlmProvider {
 
   async complete(request: LlmRequest, options?: CallOptions): Promise<LlmResponse> {
     const { apiHost, apiKey, model } = this.settings;
-    const { body } = await requestJson(
+    const body = JSON.stringify({
+      model: request.model ?? model,
+      messages: request.messages.map((message) => ({
+        role: message.role,
+        content: toContent(message.content),
+      })),
+      ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+      ...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'extracted_specs',
+          strict: true,
+          schema:
+            request.tagsOnly === true
+              ? TAGS_ONLY_SCHEMA
+              : request.includeTags === true
+                ? TAGGED_SPECS_SCHEMA
+                : SPECS_SCHEMA,
+        },
+      },
+    });
+    logger().debug('OpenAI-compatible LLM request', {
+      model: request.model ?? model,
+      apiHost,
+      chars: body.length,
+    });
+    const { body: responseBody } = await requestJson(
       `${apiHost}/chat/completions`,
       {
         method: 'POST',
@@ -63,32 +91,11 @@ export class OpenAiClient implements LlmProvider {
           'content-type': 'application/json',
           ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
         },
-        body: JSON.stringify({
-          model: request.model ?? model,
-          messages: request.messages.map((message) => ({
-            role: message.role,
-            content: toContent(message.content),
-          })),
-          ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
-          ...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
-          response_format: {
-            type: 'json_schema',
-            json_schema: {
-              name: 'extracted_specs',
-              strict: true,
-              schema:
-                request.tagsOnly === true
-                  ? TAGS_ONLY_SCHEMA
-                  : request.includeTags === true
-                    ? TAGGED_SPECS_SCHEMA
-                    : SPECS_SCHEMA,
-            },
-          },
-        }),
+        body,
       },
       options,
     );
-    const openAiBody = body as OpenAiBody;
+    const openAiBody = responseBody as OpenAiBody;
     const content = openAiBody.choices?.[0]?.message?.content;
     if (typeof content !== 'string') {
       throw new ExtractionError('LLM_ERROR', 'LLM response is missing message content');

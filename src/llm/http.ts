@@ -1,4 +1,5 @@
 import { ExtractionError } from '../errors.js';
+import { logger } from '../log.js';
 import type { CallOptions } from '../types.js';
 
 export interface JsonResponse {
@@ -19,14 +20,19 @@ export async function requestJson(
   options?.signal?.addEventListener('abort', onSignal);
 
   try {
+    const log = logger();
+    log.debug('LLM request', { method: init.method ?? 'GET', url });
     const response = await fetch(url, { ...init, signal: controller.signal });
     if (!response.ok) {
+      log.warn('LLM host error', { status: response.status });
       throw new ExtractionError(
         'LLM_ERROR',
         `LLM host responded ${response.status}${await detail(response)}`,
       );
     }
+    log.info('LLM response', { status: response.status });
     const body: unknown = await response.json().catch(() => {
+      log.warn('LLM host returned invalid JSON', { status: response.status });
       throw new ExtractionError('LLM_ERROR', 'LLM host returned invalid JSON');
     });
     return { status: response.status, body };

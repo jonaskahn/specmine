@@ -1,4 +1,5 @@
 import { ExtractionError } from '../errors.js';
+import { logger } from '../log.js';
 import type { CallOptions } from '../types.js';
 import { requestJson } from './http.js';
 import type {
@@ -83,7 +84,33 @@ export class AnthropicClient implements LlmProvider {
   async complete(request: LlmRequest, options?: CallOptions): Promise<LlmResponse> {
     const { apiHost, apiKey, model } = this.settings;
     const system = toSystem(request.messages);
-    const { body } = await requestJson(
+    const body = JSON.stringify({
+      model: request.model ?? model,
+      max_tokens: request.maxTokens ?? 1024,
+      ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+      ...(system ? { system } : {}),
+      messages: toMessages(request.messages),
+      tools: [
+        {
+          name: 'specmine',
+          description:
+            'Extract product specifications from the input content as a structured list.',
+          input_schema:
+            request.tagsOnly === true
+              ? TAGS_ONLY_SCHEMA
+              : request.includeTags === true
+                ? TAGGED_SPECS_SCHEMA
+                : SPECS_SCHEMA,
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'specmine' },
+    });
+    logger().debug('Anthropic LLM request', {
+      model: request.model ?? model,
+      apiHost,
+      chars: body.length,
+    });
+    const { body: responseBody } = await requestJson(
       `${apiHost}/v1/messages`,
       {
         method: 'POST',
@@ -92,31 +119,11 @@ export class AnthropicClient implements LlmProvider {
           'anthropic-version': this.version,
           ...(apiKey ? { 'x-api-key': apiKey } : {}),
         },
-        body: JSON.stringify({
-          model: request.model ?? model,
-          max_tokens: request.maxTokens ?? 1024,
-          ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
-          ...(system ? { system } : {}),
-          messages: toMessages(request.messages),
-          tools: [
-            {
-              name: 'specmine',
-              description:
-                'Extract product specifications from the input content as a structured list.',
-              input_schema:
-                request.tagsOnly === true
-                  ? TAGS_ONLY_SCHEMA
-                  : request.includeTags === true
-                    ? TAGGED_SPECS_SCHEMA
-                    : SPECS_SCHEMA,
-            },
-          ],
-          tool_choice: { type: 'tool', name: 'specmine' },
-        }),
+        body,
       },
       options,
     );
-    const response = body as AnthropicResponse;
+    const response = responseBody as AnthropicResponse;
     const toolUse = response.content?.find((block) => block.type === 'tool_use');
     if (toolUse?.input !== undefined) {
       return { content: JSON.stringify(toolUse.input) };

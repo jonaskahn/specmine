@@ -206,6 +206,23 @@ try {
 }
 ```
 
+### Logging
+
+Internal pipeline logs use [pino](https://github.com/pinojs/pino) or
+[winston](https://github.com/winstonjs/winston) — whichever the consuming app
+has installed (both are optional peers; with neither, logging is a no-op).
+Set the level with `SPECMINE_LOG_LEVEL` (or the global `LOG_LEVEL`), and pick
+the driver with `SPECMINE_LOG_DRIVER` (`pino` | `winston` | `auto`):
+
+```sh
+export SPECMINE_LOG_LEVEL=info
+export SPECMINE_LOG_DRIVER=auto   # auto-detects pino, then winston
+```
+
+Levels: `silent` · `fatal` · `error` · `warn` · `info` · `debug` · `trace`.
+API keys and prompt content are never logged — only lengths, counts,
+statuses, and durations.
+
 ### Advanced: custom pipeline
 
 `createExtractor()` builds an extractor with swappable pieces

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ExtractionError } from '../errors.js';
+import { logger } from '../log.js';
 import type { ExtractInput } from '../types.js';
 import { htmlToMarkdown } from './html.js';
 import type { PdfInspector } from './pdf.js';
@@ -42,10 +43,13 @@ export class DefaultReader implements InputReader {
       if (!response.ok) {
         throw new ExtractionError('LLM_ERROR', `Failed to fetch ${url}: ${response.status}`);
       }
-      return this.readRemoteFile(
-        await response.arrayBuffer(),
-        response.headers.get('content-type'),
-      );
+      const contentType = response.headers.get('content-type');
+      logger().info('Fetched remote input', {
+        url: url.toString(),
+        status: response.status,
+        contentType,
+      });
+      return this.readRemoteFile(await response.arrayBuffer(), contentType);
     }
     throw new ExtractionError('UNSUPPORTED_INPUT', `Unsupported URL scheme: ${url.protocol}`);
   }
@@ -68,6 +72,7 @@ export class DefaultReader implements InputReader {
     if (await this.isPdf(blob)) {
       return this.readPdf(blob);
     }
+    logger().debug('Read text input', { type: blob.type, size: blob.size });
     return { text: htmlToMarkdown(await blob.text()), imageOnly: false };
   }
 
@@ -88,6 +93,10 @@ export class DefaultReader implements InputReader {
     const data = new Uint8Array(await blob.arrayBuffer());
     const result = this.pdfInspector.process(data);
     if (result.markdown === null) {
+      logger().warn('PDF is image only, returning empty result', {
+        type: blob.type,
+        size: blob.size,
+      });
       return { text: '', imageOnly: true };
     }
     return { text: result.markdown, imageOnly: false };
