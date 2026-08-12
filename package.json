@@ -36,7 +36,7 @@
     "format": "prettier --write \"**/*.{js,ts,mjs,cjs}\"",
     "format:check": "prettier --check \"**/*.{js,ts,mjs,cjs}\"",
     "test": "tsx --test test/*.test.ts",
-    "coverage": "c8 --reporter=text --check-coverage --statements 100 --branches 100 --functions 100 --lines 100 node --import tsx --test test/*.test.ts"
+    "coverage": "c8 --include src --reporter=text --check-coverage --statements 100 --branches 100 --functions 100 --lines 100 node --import tsx --test test/*.test.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

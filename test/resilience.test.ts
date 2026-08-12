@@ -70,7 +70,8 @@ test('opens circuit after failure threshold', async () => {
   assert.equal(state.calls, 2);
 });
 
-test('half-open probe closes circuit on success', async () => {
+test('half-open probe closes circuit on success', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
   let calls = 0;
   const provider: LlmProvider = {
     async complete(): Promise<LlmResponse> {
@@ -88,7 +89,7 @@ test('half-open probe closes circuit on success', async () => {
   await assert.rejects(() => resilient.complete({ messages: [] }));
   await assert.rejects(() => resilient.complete({ messages: [] }));
   await assert.rejects(() => resilient.complete({ messages: [] }), /Circuit breaker is open/);
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  t.mock.timers.tick(5);
   const response = await resilient.complete({ messages: [] });
   assert.equal(response.content, '{}');
   await resilient.complete({ messages: [] });
@@ -149,7 +150,8 @@ test('aborts retry with TIMEOUT when the signal is aborted', async () => {
   assert.equal(calls, 1);
 });
 
-test('half-open probe failure reopens the circuit', async () => {
+test('half-open probe failure reopens the circuit', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
   let calls = 0;
   const provider: LlmProvider = {
     async complete(): Promise<LlmResponse> {
@@ -164,7 +166,7 @@ test('half-open probe failure reopens the circuit', async () => {
   await assert.rejects(() => resilient.complete({ messages: [] }), /boom/);
   await assert.rejects(() => resilient.complete({ messages: [] }), /boom/);
   await assert.rejects(() => resilient.complete({ messages: [] }), /Circuit breaker is open/);
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  t.mock.timers.tick(5);
   await assert.rejects(() => resilient.complete({ messages: [] }), /boom/);
   await assert.rejects(() => resilient.complete({ messages: [] }), /Circuit breaker is open/);
   assert.equal(calls, 3);
