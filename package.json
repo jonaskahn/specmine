@@ -1,6 +1,6 @@
 {
   "name": "@jonaskahn/specmine",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Mine product specifications (JSON) from text content or PDF files using an LLM.",
   "license": "MIT",
   "author": "jonaskahn",
