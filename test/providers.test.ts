@@ -64,6 +64,52 @@ test('openai sends chat/completions request with system, user and tool messages'
   assert.equal(response.content, '{"ok":"1"}');
 });
 
+test('openai uses the tagged schema when includeTags is set', async () => {
+  const captured = mockFetch({ choices: [{ message: { content: '{"specs":[]}' } }] });
+  const client = new OpenAiClient({ apiKey: 'k' });
+  await client.complete({ messages: [], includeTags: true });
+  const body = JSON.parse(String(captured.init.body)) as {
+    response_format: { json_schema: { schema: { required: string[] } } };
+  };
+  assert.deepEqual(body.response_format.json_schema.schema.required, ['specs', 'tags']);
+});
+
+test('openai uses the tags-only schema when tagsOnly is set', async () => {
+  const captured = mockFetch({ choices: [{ message: { content: '{"tags":[]}' } }] });
+  const client = new OpenAiClient({ apiKey: 'k' });
+  await client.complete({ messages: [], tagsOnly: true });
+  const body = JSON.parse(String(captured.init.body)) as {
+    response_format: { json_schema: { schema: { required: string[]; properties: unknown } } };
+  };
+  assert.deepEqual(body.response_format.json_schema.schema.required, ['tags']);
+  assert.deepEqual(body.response_format.json_schema.schema.properties, {
+    tags: { type: 'array', items: { type: 'string' } },
+  });
+});
+
+test('anthropic uses the tagged schema when includeTags is set', async () => {
+  const captured = mockFetch({ content: [{ type: 'text', text: '{"specs":[]}' }] });
+  const client = new AnthropicClient({ apiKey: 'k' });
+  await client.complete({ messages: [], includeTags: true });
+  const body = JSON.parse(String(captured.init.body)) as {
+    tools: Array<{ input_schema: { required: string[] } }>;
+  };
+  assert.deepEqual(body.tools[0]?.input_schema.required, ['specs', 'tags']);
+});
+
+test('anthropic uses the tags-only schema when tagsOnly is set', async () => {
+  const captured = mockFetch({ content: [{ type: 'text', text: '{"tags":[]}' }] });
+  const client = new AnthropicClient({ apiKey: 'k' });
+  await client.complete({ messages: [], tagsOnly: true });
+  const body = JSON.parse(String(captured.init.body)) as {
+    tools: Array<{ input_schema: { required: string[]; properties: unknown } }>;
+  };
+  assert.deepEqual(body.tools[0]?.input_schema.required, ['tags']);
+  assert.deepEqual(body.tools[0]?.input_schema.properties, {
+    tags: { type: 'array', items: { type: 'string' } },
+  });
+});
+
 test('openai maps non-2xx to LLM_ERROR', async () => {
   mockFetch({ error: 'bad' }, 500);
   const client = new OpenAiClient({ apiKey: 'k' });

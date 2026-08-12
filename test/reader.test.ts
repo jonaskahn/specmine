@@ -1,12 +1,34 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { DefaultReader } from '../src/input/reader.js';
+import { DefaultReader, REMOTE_TEMP_PREFIX } from '../src/input/reader.js';
 import { ExtractionError } from '../src/errors.js';
+import { KNOWN_USER_AGENTS } from '../src/input/user-agent.js';
 import type { PdfInspector } from '../src/input/pdf.js';
+
+async function remoteTempFiles(): Promise<string[]> {
+  return (await readdir(tmpdir())).filter((name) => name.startsWith(REMOTE_TEMP_PREFIX));
+}
+
+// Other test files (e.g. html.test.ts) also exercise readUrl() concurrently against the same
+// shared tmpdir(), so a file with this prefix can transiently belong to a sibling test rather
+// than a leak from this one. Assert only on files new since `before` that are still present,
+// with a short settle window to ride out that unrelated overlap.
+async function assertNoLeakedRemoteTempFile(before: string[]): Promise<void> {
+  const beforeSet = new Set(before);
+  const deadline = Date.now() + 500;
+  for (;;) {
+    const leaked = (await remoteTempFiles()).filter((name) => !beforeSet.has(name));
+    if (leaked.length === 0 || Date.now() >= deadline) {
+      assert.deepEqual(leaked, []);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 
 const textInspector: PdfInspector = {
   classify: () => ({ pdfType: 'TextBased', confidence: 1, pagesNeedingOcr: [] }),
@@ -108,6 +130,76 @@ test('http URL with non-ok status throws LLM_ERROR', async () => {
       () => reader.read(new URL('https://example.com/missing.txt')),
       (error: unknown) => error instanceof ExtractionError && error.code === 'LLM_ERROR',
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('http URL fetch sends a known desktop User-Agent header', async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedHeaders: HeadersInit | undefined;
+  globalThis.fetch = (async (_url, init) => {
+    capturedHeaders = init?.headers;
+    return new Response('fetched text content', { status: 200 });
+  }) as typeof fetch;
+  try {
+    const reader = new DefaultReader();
+    await reader.read(new URL('https://example.com/doc.txt'));
+    const userAgent = (capturedHeaders as Record<string, string> | undefined)?.['User-Agent'];
+    assert.ok(userAgent && KNOWN_USER_AGENTS.includes(userAgent));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('http URL download leaves no temp file after a successful read', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response('fetched text content', { status: 200 })) as typeof fetch;
+  try {
+    const before = await remoteTempFiles();
+    const reader = new DefaultReader();
+    await reader.read(new URL('https://example.com/doc.txt'));
+    await assertNoLeakedRemoteTempFile(before);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('http URL download removes temp file even when pdf processing throws', async () => {
+  const throwingInspector: PdfInspector = {
+    classify: () => ({ pdfType: 'TextBased', confidence: 1, pagesNeedingOcr: [] }),
+    process: () => {
+      throw new Error('boom');
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response('%PDF-1.4\nfake pdf body', {
+      status: 200,
+      headers: { 'content-type': 'application/pdf' },
+    })) as typeof fetch;
+  try {
+    const before = await remoteTempFiles();
+    const reader = new DefaultReader(throwingInspector);
+    await assert.rejects(() => reader.read(new URL('https://example.com/doc.pdf')));
+    await assertNoLeakedRemoteTempFile(before);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('http URL download without content-type still detects pdf by magic bytes', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(new TextEncoder().encode('%PDF-1.4\nfake pdf body'), {
+      status: 200,
+    })) as typeof fetch;
+  try {
+    const reader = new DefaultReader(textInspector);
+    const result = await reader.read(new URL('https://example.com/doc.pdf'));
+    assert.equal(result.text, '# Specs\n\nWeight: 1.5 kg');
+    assert.equal(result.imageOnly, false);
   } finally {
     globalThis.fetch = originalFetch;
   }

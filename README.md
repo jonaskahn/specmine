@@ -85,6 +85,7 @@ const spec = await extract('The Acme Kettle holds 1.5L, £49.');
 | `apiKey`    | `string`      | provider env var            | Provider key                                    |
 | `lang`      | `string`      | detected from input, `"en"` | Language for extracted keys and values          |
 | `flattened` | `boolean`     | `false`                     | `true` → reduce output to leaf pairs            |
+| `tags`      | `boolean`     | `false`                     | `true` → also return a short list of tags       |
 | `timeoutMs` | `number`      | —                           | Abort the LLM call after N milliseconds         |
 | `signal`    | `AbortSignal` | —                           | External abort signal                           |
 
@@ -100,6 +101,28 @@ Values are strings. **Flat** for text input (and PDFs with `flattened: true`),
 ```json
 { "Hardware": { "Power Supply": "12 V DC, external power supply" } }
 ```
+
+### Tags
+
+Pass `tags: true` to also get a short list of descriptive labels alongside the
+specs:
+
+```ts
+const result = await extract('The Acme Kettle holds 1.5L, £49.', { tags: true });
+// { "spec": { "Capacity": "1.5 L", "Price": "£49" }, "tags": ["kettle"] }
+```
+
+Or use `extractTags()` to get only the tags. It runs a dedicated tags-only
+prompt and structured-output schema (`{"tags": [...]}`), so no spec key/value
+pairs are extracted:
+
+```ts
+const tags = await extractTags('The Acme Kettle holds 1.5L, £49.');
+// ["kettle"]
+```
+
+Tags are only requested from the LLM when `tags: true` — the default call
+shape (prompt, schema, output) is unchanged.
 
 ### Errors
 
@@ -126,6 +149,12 @@ try {
 Zero-config convenience entry point. Input is `string | Blob | URL`; options
 are the table above. Picks the provider via `options.provider` (default
 `"openai"`), reads the input, calls the LLM, and validates the JSON output.
+With `options.tags: true` the result is `{ spec, tags }` instead.
+
+### `extractTags(input, options?): Promise<TagsResult>`
+
+Like `extract()`, but runs a dedicated tags-only prompt and schema and returns
+only the extracted tag list (`string[]`) — no spec key/value pairs.
 
 ### `createExtractor(dependencies?): Extractor`
 
@@ -277,10 +306,13 @@ it to replace the JSON contract (e.g. with a schema validator).
 
 - `ExtractInput = string | Blob | URL`
 - `ExtractOptions` — `provider`, `model`, `apiKey`, `lang`, `flattened`,
-  `timeoutMs`, `signal`
+  `tags`, `timeoutMs`, `signal`
 - `CallOptions` — `timeoutMs`, `signal`
 - `SpecsResult = ProductSpec | NestedSpecs` — `ProductSpec` is a flat
   `{ [key]: string }`, `NestedSpecs` allows nested objects
+- `TagsResult = string[]` — a list of descriptive tags
+- `TaggedResult = { spec: SpecsResult; tags: TagsResult }` — returned by
+  `extract()` with `tags: true`
 - `ExtractionError` / `ExtractionErrorCode` — see [Errors](#errors)
 - `LlmRequest` / `LlmMessage` / `LlmResponse` / `LlmProviderOptions` /
   `LlmContentPart` / `LlmTextPart` / `LlmPdfPart` / `LlmUsage` — provider

@@ -1,6 +1,6 @@
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createExtractor, DefaultExtractor, extract } from '../src/extractor.js';
+import { createExtractor, DefaultExtractor, extract, extractTags } from '../src/extractor.js';
 import { ExtractionError } from '../src/errors.js';
 import { JsonSpecValidator } from '../src/spec/validator.js';
 import type { InputReader, ReadResult } from '../src/input/reader.js';
@@ -210,6 +210,23 @@ test('falls back to raw lang when Intl.DisplayNames cannot resolve it', async ()
   assert.match(String(system.content), /Write every key and value in \./);
 });
 
+test('falls back to raw lang when DisplayNames.of returns undefined', async () => {
+  const { llm, calls } = fakeLlm(['{}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  mock.method(Intl.DisplayNames.prototype, 'of', () => undefined);
+  try {
+    await extractor.extract('content', { lang: 'zz' });
+    const system = calls[0]?.messages[0] as LlmMessage;
+    assert.match(String(system.content), /Write every key and value in zz/);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('createExtractor defaults reader, llm and validator', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () =>
@@ -375,4 +392,244 @@ test('flattened: true keeps top-level leaves alongside innermost pairs', async (
   });
   const spec = await extractor.extract('content', { flattened: true });
   assert.deepEqual(spec, { 'Power Supply': '12 V DC', Model: 'AX-1' });
+});
+
+test('tags: true returns spec and tags from the envelope', async () => {
+  const { llm } = fakeLlm([
+    '{"specs":[{"key":"Weight","value":"1.5 kg","children":[]}],"tags":["kettle","stainless-steel"]}',
+  ]);
+  const extractor = createExtractor({
+    reader: fakeReader('A kettle weighing 1.5 kg.'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const result = await extractor.extract('anything', { tags: true });
+  assert.deepEqual(result, {
+    spec: { Weight: '1.5 kg' },
+    tags: ['kettle', 'stainless-steel'],
+  });
+});
+
+test('extractTags returns only the tag list', async () => {
+  const { llm } = fakeLlm([
+    '{"specs":[{"key":"Weight","value":"1.5 kg","children":[]}],"tags":["kettle","stainless-steel"]}',
+  ]);
+  const extractor = createExtractor({
+    reader: fakeReader('A kettle weighing 1.5 kg.'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const tags = await extractor.extractTags('anything');
+  assert.deepEqual(tags, ['kettle', 'stainless-steel']);
+});
+
+test('extractTags returns tags from a tags-only response', async () => {
+  const { llm } = fakeLlm(['{"tags":["kettle","stainless-steel"]}']);
+  const extractor = createExtractor({
+    reader: fakeReader('A kettle weighing 1.5 kg.'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const tags = await extractor.extractTags('anything');
+  assert.deepEqual(tags, ['kettle', 'stainless-steel']);
+});
+
+test('extractTags uses the tags-only prompt and request flag', async () => {
+  const { llm, calls } = fakeLlm(['{"tags":[]}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  await extractor.extractTags('content');
+  assert.equal(calls[0]?.tagsOnly, true);
+  assert.equal(calls[0]?.includeTags, undefined);
+  const system = calls[0]?.messages[0] as LlmMessage;
+  assert.match(String(system.content), /extract descriptive tags/);
+  assert.match(String(system.content), /\{"tags": \["tag1", "tag2"\]\}/);
+  assert.doesNotMatch(String(system.content), /"specs"/);
+});
+
+test('extractTags writes tags in the requested language', async () => {
+  const { llm, calls } = fakeLlm(['{"tags":[]}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  await extractor.extractTags('content', { lang: 'de' });
+  const system = calls[0]?.messages[0] as LlmMessage;
+  assert.match(String(system.content), /Write every tag in German/);
+});
+
+test('extract() with tags: true handles a tags-only response', async () => {
+  const { llm } = fakeLlm(['{"tags":["kettle"]}']);
+  const extractor = createExtractor({
+    reader: fakeReader('A kettle.'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const result = await extractor.extract('anything', { tags: true });
+  assert.deepEqual(result, { spec: {}, tags: ['kettle'] });
+});
+
+test('extractTags rejects a tags-only response with non-string tags', async () => {
+  const { llm } = fakeLlm(['{"tags":["ok",42]}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  await assert.rejects(
+    () => extractor.extractTags('content'),
+    (error: unknown) => error instanceof ExtractionError && error.code === 'INVALID_OUTPUT',
+  );
+});
+
+test('extractTags returns an empty list when the envelope has no tags', async () => {
+  const { llm } = fakeLlm(['{"specs":[{"key":"Weight","value":"1.5 kg","children":[]}]}']);
+  const extractor = createExtractor({
+    reader: fakeReader('A kettle weighing 1.5 kg.'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const tags = await extractor.extractTags('anything');
+  assert.deepEqual(tags, []);
+});
+
+test('extractTags trims, lowercases, dedupes and caps tags at eight', async () => {
+  const { llm } = fakeLlm([
+    '{"tags":[" Kettle ","kettle","","  ","KETTLE","stainless-steel","stainless-steel","one","two","three","four","five","six","seven"]}',
+  ]);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const tags = await extractor.extractTags('content');
+  assert.deepEqual(tags, [
+    'kettle',
+    'stainless-steel',
+    'one',
+    'two',
+    'three',
+    'four',
+    'five',
+    'six',
+  ]);
+});
+
+test('requests includeTags and a tags prompt only when tags are requested', async () => {
+  const { llm, calls } = fakeLlm(['{"specs":[]}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  await extractor.extract('content');
+  assert.equal(calls[0]?.includeTags, undefined);
+  const system = calls[0]?.messages[0] as LlmMessage;
+  assert.doesNotMatch(String(system.content), /"tags"/);
+});
+
+test('requests includeTags and a tags prompt when tags: true', async () => {
+  const { llm, calls } = fakeLlm(['{"specs":[],"tags":[]}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  await extractor.extract('content', { tags: true });
+  assert.equal(calls[0]?.includeTags, true);
+  const system = calls[0]?.messages[0] as LlmMessage;
+  assert.match(String(system.content), /"tags"/);
+});
+
+test('language line mentions tags when tags are requested', async () => {
+  const { llm, calls } = fakeLlm(['{"specs":[],"tags":[]}']);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  await extractor.extract('content', { lang: 'de', tags: true });
+  const system = calls[0]?.messages[0] as LlmMessage;
+  assert.match(String(system.content), /Write every key, value, and tag in German/);
+});
+
+test('extractTags returns an empty list for all-image pdfs without calling llm', async () => {
+  let called = false;
+  const llm: LlmProvider = {
+    async complete(): Promise<LlmResponse> {
+      called = true;
+      return { content: '{}' };
+    },
+  };
+  const extractor = createExtractor({
+    reader: fakeReader('', true),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const tags = await extractor.extractTags('whatever');
+  assert.deepEqual(tags, []);
+  assert.equal(called, false);
+});
+
+test('tags: true returns empty spec and tags for all-image pdfs', async () => {
+  let called = false;
+  const llm: LlmProvider = {
+    async complete(): Promise<LlmResponse> {
+      called = true;
+      return { content: '{}' };
+    },
+  };
+  const extractor = createExtractor({
+    reader: fakeReader('', true),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const result = await extractor.extract('whatever', { tags: true });
+  assert.deepEqual(result, { spec: {}, tags: [] });
+  assert.equal(called, false);
+});
+
+test('tags: true keeps tags intact when flattening the spec', async () => {
+  const { llm } = fakeLlm([
+    '{"specs":[{"key":"Hardware","value":"","children":[{"key":"Power Supply","value":"12 V DC","children":[]}]}],"tags":["kettle"]}',
+  ]);
+  const extractor = createExtractor({
+    reader: fakeReader('content'),
+    llm,
+    validator: new JsonSpecValidator(),
+  });
+  const result = await extractor.extract('content', { tags: true, flattened: true });
+  assert.deepEqual(result, { spec: { 'Power Supply': '12 V DC' }, tags: ['kettle'] });
+});
+
+test('extractTags works end to end with a fake provider', async () => {
+  const llm: LlmProvider = {
+    async complete(): Promise<LlmResponse> {
+      return { content: '{"specs":[],"tags":["kettle"]}' };
+    },
+  };
+  const tags = await createExtractor({ llm }).extractTags('a kettle');
+  assert.deepEqual(tags, ['kettle']);
+});
+
+test('extractTags() uses the openai provider by default', async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = '';
+  globalThis.fetch = (async (url: unknown) => {
+    capturedUrl = String(url);
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{}' } }] }), {
+      status: 200,
+    });
+  }) as typeof fetch;
+  try {
+    const tags = await extractTags('a kettle', { apiKey: 'k' });
+    assert.deepEqual(tags, []);
+    assert.match(capturedUrl, /\/chat\/completions$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

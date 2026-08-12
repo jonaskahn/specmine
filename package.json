@@ -1,6 +1,6 @@
 {
   "name": "@jonaskahn/specmine",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Mine product specifications (JSON) from text content or PDF files using an LLM.",
   "license": "MIT",
   "author": "jonaskahn",
@@ -36,12 +36,13 @@
     "format": "prettier --write \"**/*.{js,ts,mjs,cjs}\"",
     "format:check": "prettier --check \"**/*.{js,ts,mjs,cjs}\"",
     "test": "tsx --test test/*.test.ts",
-    "coverage": "node --import tsx --test --experimental-test-coverage test/*.test.ts"
+    "coverage": "c8 --reporter=text --check-coverage --statements 100 --branches 100 --functions 100 --lines 100 node --import tsx --test test/*.test.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.2.0",
     "@types/turndown": "^5.0.6",
+    "c8": "^12.0.0",
     "dotenv": "^17.4.2",
     "eslint": "^10.8.1",
     "eslint-config-prettier": "^10.1.8",

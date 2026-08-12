@@ -6,10 +6,12 @@ export type {
   NestedSpecs,
   ProductSpec,
   SpecsResult,
+  TaggedResult,
+  TagsResult,
 } from './types.js';
 export { ExtractionError, isExtractionError } from './errors.js';
 export type { Extractor, ExtractorDependencies } from './extractor.js';
-export { createExtractor, DefaultExtractor, extract } from './extractor.js';
+export { createExtractor, DefaultExtractor, extract, extractTags } from './extractor.js';
 export type { InputReader, ReadResult } from './input/reader.js';
 export { DefaultReader } from './input/reader.js';
 export type { PdfClassification, PdfExtraction, PdfInspector, PdfType } from './input/pdf.js';

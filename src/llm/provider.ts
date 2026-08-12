@@ -24,6 +24,10 @@ export interface LlmRequest {
   messages: LlmMessage[];
   temperature?: number;
   maxTokens?: number;
+  /** request the structured output to include a tags array */
+  includeTags?: boolean;
+  /** request the structured output to return tags only */
+  tagsOnly?: boolean;
 }
 
 export interface LlmUsage {

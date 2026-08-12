@@ -1,8 +1,10 @@
-import type { NestedSpecs, SpecsResult } from '../types.js';
-import { envelopeToSpecs } from './schema.js';
+import type { NestedSpecs, SpecsResult, TagsResult } from '../types.js';
+import { envelopeToResult } from './schema.js';
 
 export interface SpecValidationResult {
   spec?: SpecsResult;
+  /** tags parsed from a structured-output envelope; empty when the response has none */
+  tags: TagsResult;
   errors: string[];
 }
 
@@ -44,19 +46,19 @@ export class JsonSpecValidator implements SpecValidator {
       parsed = JSON.parse(stripFences(raw));
     } catch {
       errors.push('Response is not valid JSON');
-      return { errors };
+      return { tags: [], errors };
     }
     if (!isRecord(parsed)) {
       errors.push('Response is not a JSON object');
-      return { errors };
+      return { tags: [], errors };
     }
-    const envelope = envelopeToSpecs(parsed);
-    if (envelope !== undefined) {
-      return { spec: envelope, errors: [] };
+    const result = envelopeToResult(parsed);
+    if (result !== undefined) {
+      return { spec: result.spec, tags: result.tags, errors: [] };
     }
     if (isValidSpec(parsed, errors, '')) {
-      return { spec: parsed as NestedSpecs, errors: [] };
+      return { spec: parsed as NestedSpecs, tags: [], errors: [] };
     }
-    return { errors };
+    return { tags: [], errors };
   }
 }

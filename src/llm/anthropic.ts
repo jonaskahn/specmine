@@ -9,7 +9,7 @@ import type {
   LlmResponse,
 } from './provider.js';
 import { resolveSettings, type ResolvedSettings } from './settings.js';
-import { SPECS_SCHEMA } from '../spec/schema.js';
+import { SPECS_SCHEMA, TAGGED_SPECS_SCHEMA, TAGS_ONLY_SCHEMA } from '../spec/schema.js';
 
 export const DEFAULT_ANTHROPIC_API_HOST = 'https://api.anthropic.com';
 export const DEFAULT_ANTHROPIC_MODEL = 'haiku-4.5';
@@ -103,7 +103,12 @@ export class AnthropicClient implements LlmProvider {
               name: 'specmine',
               description:
                 'Extract product specifications from the input content as a structured list.',
-              input_schema: SPECS_SCHEMA,
+              input_schema:
+                request.tagsOnly === true
+                  ? TAGS_ONLY_SCHEMA
+                  : request.includeTags === true
+                    ? TAGGED_SPECS_SCHEMA
+                    : SPECS_SCHEMA,
             },
           ],
           tool_choice: { type: 'tool', name: 'specmine' },

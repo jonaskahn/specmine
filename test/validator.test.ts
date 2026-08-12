@@ -70,6 +70,74 @@ test('rejects non-JSON', () => {
 
 test('rejects non-object JSON', () => {
   const result = validator.validate('"hello"');
-  assert.match(result.errors.join(';'), /not a JSON object/);
+  assert.match(result.errors.join('; '), /not a JSON object/);
   assert.equal(result.spec, undefined);
+});
+
+test('extracts tags from a structured-output envelope', () => {
+  const result = validator.validate(
+    '{"specs":[{"key":"Weight","value":"1.5 kg","children":[]}],"tags":["kettle","stainless-steel"]}',
+  );
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.spec, { Weight: '1.5 kg' });
+  assert.deepEqual(result.tags, ['kettle', 'stainless-steel']);
+});
+
+test('returns empty tags when the envelope has none', () => {
+  const result = validator.validate('{"specs":[]}');
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.tags, []);
+});
+
+test('returns empty tags for a bare spec object', () => {
+  const result = validator.validate('{"Weight": "1.5 kg"}');
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.tags, []);
+});
+
+test('rejects envelope with non-string tag', () => {
+  const result = validator.validate('{"specs":[],"tags":["ok",42]}');
+  assert.equal(result.spec, undefined);
+});
+
+test('returns empty tags on invalid output', () => {
+  const result = validator.validate('{"Weight": 1.5}');
+  assert.equal(result.spec, undefined);
+  assert.deepEqual(result.tags, []);
+});
+
+test('rejects a JSON array response', () => {
+  const result = validator.validate('[1, 2]');
+  assert.match(result.errors.join('; '), /not a JSON object/);
+  assert.equal(result.spec, undefined);
+});
+
+test('falls back to a bare object when specs is not an array', () => {
+  const result = validator.validate('{"specs": "nope"}');
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.spec, { specs: 'nope' });
+});
+
+test('rejects envelope with non-array tags', () => {
+  const result = validator.validate('{"specs":[],"tags":"kettle"}');
+  assert.equal(result.spec, undefined);
+});
+
+test('rejects envelope with a non-object spec item', () => {
+  const result = validator.validate('{"specs":["Weight"]}');
+  assert.equal(result.spec, undefined);
+  assert.match(result.errors.join('; '), /must be a string or nested object/);
+});
+
+test('rejects envelope with malformed children content', () => {
+  const result = validator.validate(
+    '{"specs":[{"key":"Hardware","value":"","children":[{"key":1}]}]}',
+  );
+  assert.equal(result.spec, undefined);
+});
+
+test('reports <root> as the path for a non-string leaf under an empty key', () => {
+  const result = validator.validate('{"": 1.5}');
+  assert.equal(result.spec, undefined);
+  assert.match(result.errors.join('; '), /Value at '<root>'/);
 });

@@ -1,9 +1,15 @@
-import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ExtractionError } from '../errors.js';
 import type { ExtractInput } from '../types.js';
 import { htmlToMarkdown } from './html.js';
 import type { PdfInspector } from './pdf.js';
+import { pickUserAgent } from './user-agent.js';
+
+export const REMOTE_TEMP_PREFIX = 'specmine-remote-';
 
 export interface ReadResult {
   text: string;
@@ -32,13 +38,30 @@ export class DefaultReader implements InputReader {
       return this.readBlob(new Blob([await readFile(fileURLToPath(url))]));
     }
     if (url.protocol === 'http:' || url.protocol === 'https:') {
-      const response = await fetch(url);
+      const response = await fetch(url, { headers: { 'User-Agent': pickUserAgent() } });
       if (!response.ok) {
         throw new ExtractionError('LLM_ERROR', `Failed to fetch ${url}: ${response.status}`);
       }
-      return this.readBlob(await response.blob());
+      return this.readRemoteFile(
+        await response.arrayBuffer(),
+        response.headers.get('content-type'),
+      );
     }
     throw new ExtractionError('UNSUPPORTED_INPUT', `Unsupported URL scheme: ${url.protocol}`);
+  }
+
+  private async readRemoteFile(
+    bytes: ArrayBuffer,
+    contentType: string | null,
+  ): Promise<ReadResult> {
+    const tmpPath = join(tmpdir(), `${REMOTE_TEMP_PREFIX}${randomUUID()}`);
+    try {
+      await writeFile(tmpPath, Buffer.from(bytes));
+      const diskBytes = await readFile(tmpPath);
+      return await this.readBlob(new Blob([diskBytes], { type: contentType ?? '' }));
+    } finally {
+      await rm(tmpPath, { force: true });
+    }
   }
 
   private async readBlob(blob: Blob): Promise<ReadResult> {

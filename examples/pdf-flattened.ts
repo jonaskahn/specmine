@@ -12,7 +12,7 @@ console.log(JSON.stringify(spec, null, 2));
 
 const spec1 = await extract(
   new URL(
-    'https://www.axis.com/dam/public/c6/2b/2e/datasheet-axis-ta1201-wall-mount-enclosure-de-DE-479483.pdf',
+    'https://www.axis.com/dam/public/54/dc/6c/datasheet-axis-ta8201-recessed-mount-de-DE-307987.pdf',
   ),
   { flattened: true, lang: 'en' },
 );

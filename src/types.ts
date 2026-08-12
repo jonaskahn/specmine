@@ -10,6 +10,13 @@ export interface NestedSpecs {
 
 export type SpecsResult = ProductSpec | NestedSpecs;
 
+export type TagsResult = string[];
+
+export interface TaggedResult {
+  spec: SpecsResult;
+  tags: TagsResult;
+}
+
 export type ExtractionErrorCode =
   'EMPTY_INPUT' | 'UNSUPPORTED_INPUT' | 'LLM_ERROR' | 'INVALID_OUTPUT' | 'TIMEOUT';
 
@@ -26,6 +33,8 @@ export interface ExtractOptions extends CallOptions {
   flattened?: boolean;
   /** flattened mode: keep parent-key prefixes (' · ') when true, innermost leaf pairs when false. Default: false */
   inheritance?: boolean;
+  /** also return a short list of descriptive tags alongside the specs. Default: false */
+  tags?: boolean;
 }
 
 export type ExtractInput = string | Blob | URL;
