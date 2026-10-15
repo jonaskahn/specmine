@@ -84,6 +84,13 @@ export class AnthropicClient implements LlmProvider {
   async complete(request: LlmRequest, options?: CallOptions): Promise<LlmResponse> {
     const { apiHost, apiKey, model } = this.settings;
     const system = toSystem(request.messages);
+    const schema =
+      request.schema ??
+      (request.tagsOnly === true
+        ? TAGS_ONLY_SCHEMA
+        : request.includeTags === true
+          ? TAGGED_SPECS_SCHEMA
+          : SPECS_SCHEMA);
     const body = JSON.stringify({
       model: request.model ?? model,
       max_tokens: request.maxTokens ?? 1024,
@@ -92,18 +99,13 @@ export class AnthropicClient implements LlmProvider {
       messages: toMessages(request.messages),
       tools: [
         {
-          name: 'specmine',
+          name: request.schemaName ?? 'specmine',
           description:
             'Extract product specifications from the input content as a structured list.',
-          input_schema:
-            request.tagsOnly === true
-              ? TAGS_ONLY_SCHEMA
-              : request.includeTags === true
-                ? TAGGED_SPECS_SCHEMA
-                : SPECS_SCHEMA,
+          input_schema: schema,
         },
       ],
-      tool_choice: { type: 'tool', name: 'specmine' },
+      tool_choice: { type: 'tool', name: request.schemaName ?? 'specmine' },
     });
     logger().debug('Anthropic LLM request', {
       model: request.model ?? model,

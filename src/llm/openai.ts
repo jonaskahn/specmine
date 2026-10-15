@@ -56,6 +56,13 @@ export class OpenAiClient implements LlmProvider {
 
   async complete(request: LlmRequest, options?: CallOptions): Promise<LlmResponse> {
     const { apiHost, apiKey, model } = this.settings;
+    const schema =
+      request.schema ??
+      (request.tagsOnly === true
+        ? TAGS_ONLY_SCHEMA
+        : request.includeTags === true
+          ? TAGGED_SPECS_SCHEMA
+          : SPECS_SCHEMA);
     const body = JSON.stringify({
       model: request.model ?? model,
       messages: request.messages.map((message) => ({
@@ -67,14 +74,9 @@ export class OpenAiClient implements LlmProvider {
       response_format: {
         type: 'json_schema',
         json_schema: {
-          name: 'extracted_specs',
+          name: request.schemaName ?? 'extracted_specs',
           strict: true,
-          schema:
-            request.tagsOnly === true
-              ? TAGS_ONLY_SCHEMA
-              : request.includeTags === true
-                ? TAGGED_SPECS_SCHEMA
-                : SPECS_SCHEMA,
+          schema,
         },
       },
     });
