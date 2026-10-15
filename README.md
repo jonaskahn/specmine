@@ -172,8 +172,9 @@ Tags are normalized in code: lowercased, trimmed, deduplicated, max 8.
 
 ### Combined spec + image output
 
-`analyze()` classifies the input (Jev decision model with LLM fallback),
-then extracts specs and/or generates a product image through LiteLLM:
+`analyze()` classifies the input, then extracts specs and/or generates
+a product image through LiteLLM. Each category gets its own spec hints,
+visual slots and render style — see "Classification" below:
 
 ```ts
 import { analyze, generateImage } from '@jonaskahn/specmine';
@@ -206,6 +207,45 @@ covers both text and image calls.
 Skip the classifier with `category` (e.g. `electronics`, `apparel_footwear`,
 `real_estate`); use `mode: 'sequential'` to render from the extracted spec
 instead of a separate visual pass.
+
+### Classification
+
+`analyze()` routes the input through a classifier to pick the category profile
+(kind, domain, image archetype). Modes, in order of precedence —
+`classifier.mode` option, then `classifier.provider` (deprecated alias),
+then `SPECMINE_CLASSIFIER`, default `auto`:
+
+| mode   | behaviour                                                                                                                             |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto` | Jev when a key is set (`classifier.apiKey` → `apiKey` → `TYPESAFE_API_KEY`); otherwise the general profile with zero classifier calls |
+| `jev`  | Jev only — errors and low confidence fall back to the general profile, no silent LLM call                                             |
+| `llm`  | Small structured-output LLM call on your text provider (opt-in)                                                                       |
+| `off`  | Always the general profile                                                                                                            |
+
+Jev answers in ~~70–500 ms and bills input tokens only (~~$0.042/1M, output
+free), up to 10 questions per request. Note the 60 req/min self-serve rate
+limit. `result.category` carries `source` (`jev` | `llm` | `user` |
+`fallback`) and, on fallback, a `reason` (`no_key`, `disabled`,
+`jev_error`, `low_confidence`, `llm_error`, `classify_error`,
+`user_override`).
+
+Custom domains inherit a family profile:
+
+```ts
+import { registerCategory } from '@jonaskahn/specmine';
+
+registerCategory('wine' as DomainId, {
+  family: 'goods',
+  subjectNoun: 'bottle',
+  specHints: ['vintage', 'region', 'grape variety'],
+  specIgnore: ['serving suggestions'],
+  notDepictable: ['price', 'vintage year'],
+  archetype: 'food_shot',
+  defaultStyle: 'elegant bottle photo',
+  defaultSize: '1024x1024',
+  allowImage: true,
+});
+```
 
 ### Timeouts and cancellation
 
@@ -303,7 +343,8 @@ Runnable examples live in [`examples/`](examples/) — `npx tsx examples/text.ts
 `examples/pdf.ts`, `examples/tags.ts`, `examples/flattened.ts`, `examples/language.ts`,
 `examples/html.ts`, `examples/anthropic.ts`, `examples/resilient.ts`,
 `examples/analyze.ts`, `examples/sequential.ts`, `examples/generate-image.ts`,
-`examples/classify.ts`, `examples/litellm.ts`.
+`examples/classify.ts`, `examples/litellm.ts`, `examples/eval-categories.ts`
+(live API evaluation, not CI).
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
