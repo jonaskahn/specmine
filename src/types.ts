@@ -38,3 +38,65 @@ export interface ExtractOptions extends CallOptions {
 }
 
 export type ExtractInput = string | Blob | URL;
+
+export type OutputKind = 'spec' | 'image';
+
+export type ProcessMode = 'parallel' | 'sequential';
+
+export interface ImageOutputOptions extends CallOptions {
+  model?: string;
+  apiHost?: string;
+  apiKey?: string;
+  size?: string;
+  quality?: string;
+  background?: string;
+  style?: string;
+  dialect?: string;
+}
+
+export interface ClassifierConfig extends CallOptions {
+  provider?: 'auto' | 'jev' | 'llm' | 'off';
+  apiKey?: string;
+  apiHost?: string;
+  model?: string;
+  minConfidence?: number;
+}
+
+export interface ProcessOptions extends ExtractOptions {
+  outputs?: OutputKind[];
+  mode?: ProcessMode;
+  category?: string;
+  kind?: string;
+  classifier?: ClassifierConfig;
+  image?: ImageOutputOptions;
+  failFast?: boolean;
+}
+
+export interface CategoryInfo {
+  kind: string;
+  domain: string;
+  family: string;
+  archetype: string;
+  confidence: number;
+  source: 'jev' | 'llm' | 'user' | 'fallback';
+}
+
+export interface GeneratedImage {
+  blob: Blob;
+  mimeType: string;
+  prompt: string;
+  revisedPrompt?: string;
+}
+
+export interface ProcessErrors {
+  spec?: import('./errors.js').ExtractionError;
+  image?: import('./errors.js').ExtractionError;
+}
+
+export interface ProcessResult {
+  category: CategoryInfo;
+  spec?: SpecsResult;
+  tags?: TagsResult;
+  image?: GeneratedImage;
+  errors?: ProcessErrors;
+}
