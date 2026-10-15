@@ -67,11 +67,16 @@ function subjectNoiseBlock(profile: ResolvedProfile): string {
   return `${SOURCE_NOISE_BLOCK}\nSubject: this content is a ${profile.domain} (${profile.subjectNoun}). Isolate the single ${profile.subjectNoun} described and extract only from its relevant text.`;
 }
 
-function categoryHintsBlock(profile: ResolvedProfile): string {
-  const hints = [...profile.familySpecHints, ...profile.specHints];
-  const unique = [...new Set(hints)];
-  if (unique.length === 0) return '';
-  return `Category hints for ${profile.domain} — look for these concepts when stated, still copying source labels verbatim: ${unique.join(', ')}.`;
+function categoryBlock(profile: ResolvedProfile): string {
+  const hints = [...new Set([...profile.familySpecHints, ...profile.specHints])];
+  const lines = [
+    `Category: this content is ${profile.domain} — the subject is a ${profile.subjectNoun}.`,
+    `Look for these concepts when stated, still copying source labels verbatim: ${hints.join(', ')}.`,
+  ];
+  if (profile.specIgnore.length > 0) {
+    lines.push(`Ignore (never extract as specs): ${profile.specIgnore.join('; ')}.`);
+  }
+  return lines.join('\n');
 }
 
 function tagIdentityBlock(profile: ResolvedProfile): string {
@@ -95,7 +100,7 @@ export function taskLine(mode: PromptMode, profile?: ResolvedProfile): string {
 }
 
 function hintsBlock(profile: ResolvedProfile): string {
-  return categoryHintsBlock(profile);
+  return categoryBlock(profile);
 }
 
 const SPECS_SYSTEM_PROMPT = [
@@ -176,7 +181,7 @@ export function buildSystemPrompt(
           KEY_DISCIPLINE_BLOCK,
           KEY_VERBATIM_EXAMPLE,
           VALUE_FORMAT_BLOCK,
-          ...(hints ? [hints] : []),
+          hints,
           GROUNDING_BLOCK,
           SPEC_OUTPUT_SHAPE,
           OUTPUT_DISCIPLINE_BLOCK,
@@ -192,7 +197,7 @@ export function buildSystemPrompt(
             tagIdentityBlock(profile),
             TAG_ORDER_BLOCK,
             TAG_FORMAT_BLOCK,
-            ...(hints ? [hints] : []),
+            hints,
             GROUNDING_BLOCK,
             `${SPEC_OUTPUT_SHAPE}\n"tags" is a reserved top-level key for the array described above — never use "tags" as a specification key, and never nest it inside a group.`,
             OUTPUT_DISCIPLINE_BLOCK,
@@ -204,7 +209,7 @@ export function buildSystemPrompt(
             tagIdentityBlock(profile),
             TAG_ORDER_BLOCK,
             TAG_FORMAT_BLOCK,
-            ...(hints ? [hints] : []),
+            hints,
             'Grounding:\n- Only include a tag that is clearly supported by the content; when in doubt, leave it out rather than guess.',
             'Output discipline:\n- Respond with a single JSON object and nothing else, using this exact shape:\n  {"tags": ["tag1", "tag2"]}',
           ];
