@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveProfile } from '../src/category/registry.js';
 import type { LlmProvider, LlmResponse } from '../src/llm/provider.js';
-import { VisualExtractor } from '../src/image/visual-extractor.js';
+import { buildVisualPrompts, VisualExtractor } from '../src/image/visual-extractor.js';
 
 function fakeLlm(content: string | Error): LlmProvider {
   return {
@@ -34,4 +34,24 @@ test('returns undefined on llm error, bad json and bad shape', async () => {
     await new VisualExtractor(fakeLlm('{"colors": []}')).extract('text', profile),
     undefined,
   );
+});
+
+test('builds category visual prompts with exclusions', () => {
+  const { system, slots } = buildVisualPrompts(resolveProfile('apparel_footwear'));
+  assert.ok(slots.includes('colors'));
+  assert.ok(system.includes('Never depict or include: size, fit tables'));
+  const general = buildVisualPrompts(resolveProfile('general'));
+  assert.ok(!general.system.includes('Never depict'));
+  const bare = buildVisualPrompts({ ...resolveProfile('general'), visualSlots: [] });
+  assert.ok(bare.slots.includes('subject'));
+});
+
+test('refuses thin facts below the minimum', async () => {
+  const thin = JSON.stringify({ subject: 'thing', colors: [], materials: [], heroFeatures: [] });
+  const profile = resolveProfile('electronics');
+  assert.equal(
+    await new VisualExtractor(fakeLlm(thin)).extract('text', profile, { minFacts: 2 }),
+    undefined,
+  );
+  assert.ok(await new VisualExtractor(fakeLlm(thin)).extract('text', profile));
 });

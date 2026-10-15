@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { GENERIC_CLASSIFICATION, isClassifierMode, isKnownKind, isKnownScope } from '../src/classify/classifier.js';
+import {
+  GENERIC_CLASSIFICATION,
+  isClassifierMode,
+  isKnownKind,
+  isKnownScope,
+} from '../src/classify/classifier.js';
 import { buildJevQuestions, createJevClassifier, JevClassifier } from '../src/classify/jev.js';
 import { LlmClassifier } from '../src/classify/llm.js';
 import type { LlmProvider, LlmRequest, LlmResponse } from '../src/llm/provider.js';

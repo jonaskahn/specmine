@@ -76,3 +76,18 @@ test('regulated and abstract domains have expected archetypes', () => {
   assert.equal(resolveProfile('job_listing').recipe.id, 'none');
   assert.equal(resolveProfile('news_analysis').recipe.id, 'editorial_concept');
 });
+
+test('domains carry visual fields with family fallback', () => {
+  const estate = resolveProfile('real_estate');
+  assert.deepEqual(estate.visualSlots, ['subject', 'setting']);
+  assert.ok(estate.notDepictable.includes('price'));
+  assert.ok(estate.specIgnore.includes('agent contact blocks'));
+  assert.equal(estate.minFacts, 3);
+  assert.ok(estate.keyMap.subject.includes('property'));
+  assert.ok(estate.keyMap.subject.includes('brand'));
+  const app = resolveProfile('software_app');
+  assert.deepEqual(app.visualSlots, ['subject', 'colors', 'setting', 'mood']);
+  const general = resolveProfile('general');
+  assert.equal(general.recipe.id, 'generic_subject');
+  assert.equal(general.minFacts, 2);
+});

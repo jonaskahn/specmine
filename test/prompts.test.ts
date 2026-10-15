@@ -42,13 +42,15 @@ test('language line is appended for non-english with and without profile', () =>
   assert.ok(buildSystemPrompt('de', 'tags-only').includes('German'));
 });
 
-test('profile without hints omits the hints block', () => {
+test('profile always carries a category block with ignore list', () => {
   const prompt = buildSystemPrompt('en', 'specs', emptyHintsProfile());
-  assert.ok(!prompt.includes('Category hints'));
-  const tagsOnly = buildSystemPrompt('en', 'tags-only', emptyHintsProfile());
-  assert.ok(!tagsOnly.includes('Category hints'));
+  assert.ok(prompt.includes('Category: this content is general'));
+  assert.ok(!prompt.includes('Ignore (never extract as specs)'));
+  const apparel = buildSystemPrompt('en', 'specs', resolveProfile('apparel_footwear'));
+  assert.ok(apparel.includes('Category: this content is apparel_footwear'));
+  assert.ok(apparel.includes('Ignore (never extract as specs): size chart tables'));
   const both = buildSystemPrompt('en', 'specs-and-tags', emptyHintsProfile());
-  assert.ok(!both.includes('Category hints'));
+  assert.ok(both.includes('Category: this content is general'));
 });
 
 test('taskLine covers every mode with and without a profile', () => {

@@ -331,10 +331,7 @@ test('classifier errors fall back to generic', async () => {
 });
 
 test('auto mode without a jev key skips classification', async () => {
-  const built = createPipeline(
-    { reader: reader(TEXT), llm: scriptLlm([SPECS_JSON]).llm },
-    {},
-  );
+  const built = createPipeline({ reader: reader(TEXT), llm: scriptLlm([SPECS_JSON]).llm }, {});
   const result = await built.process('anything');
   assert.equal(result.category.source, 'fallback');
   assert.equal(result.category.reason, 'no_key');
@@ -350,8 +347,7 @@ test('classifier mode wins over the deprecated provider alias', async () => {
 });
 
 test('SPECMINE_CLASSIFIER env selects the mode', async () => {
-  const make = () =>
-    createPipeline({ reader: reader(TEXT), llm: scriptLlm([SPECS_JSON]).llm }, {});
+  const make = () => createPipeline({ reader: reader(TEXT), llm: scriptLlm([SPECS_JSON]).llm }, {});
   process.env.SPECMINE_CLASSIFIER = 'off';
   assert.equal((await make().process('anything')).category.reason, 'disabled');
   process.env.SPECMINE_CLASSIFIER = 'bogus';
@@ -664,16 +660,14 @@ test('low jev confidence falls back to generic without an llm call', async () =>
 test('jev outage falls back to generic without an llm call', async () => {
   process.env.TYPESAFE_API_KEY = 'k';
   let llmCalls = 0;
-  globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+  globalThis.fetch = (async (url: unknown) => {
     if (String(url).includes('/v1/systemone')) {
       return new Response('bad gateway', { status: 502 });
     }
     llmCalls += 1;
-    const raw = String((init as RequestInit).body ?? '{}');
-    return new Response(
-      JSON.stringify({ choices: [{ message: { content: SPECS_JSON } }] }),
-      { status: 200 },
-    );
+    return new Response(JSON.stringify({ choices: [{ message: { content: SPECS_JSON } }] }), {
+      status: 200,
+    });
   }) as typeof fetch;
   try {
     const pipe = createPipeline(undefined, { classifier: { provider: 'jev' } });

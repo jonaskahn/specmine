@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveProfile } from '../src/category/registry.js';
+import {
+  listDomains,
+  registerCategory,
+  resetCategoryOverrides,
+  resolveProfile,
+} from '../src/category/registry.js';
 import { guessDialect, PROMPT_DIALECTS } from '../src/image/dialects.js';
 import {
   countFilledSlots,
@@ -9,6 +14,10 @@ import {
   VISUAL_FACTS_SCHEMA,
 } from '../src/image/facts.js';
 import { pickVisualFacts } from '../src/image/fact-picker.js';
+
+test.afterEach(() => {
+  resetCategoryOverrides();
+});
 import {
   containsForbiddenNumbers,
   sanitizeFactsText,
@@ -79,6 +88,7 @@ test('counts slots and checks minimum', () => {
 });
 
 test('picks visual facts from nested multilingual specs', () => {
+  const { keyMap } = resolveProfile('electronics');
   const facts = pickVisualFacts(
     {
       Farbe: 'mattschwarz',
@@ -88,6 +98,8 @@ test('picks visual facts from nested multilingual specs', () => {
       Marke: 'Acme',
     },
     ['kettle'],
+    'product',
+    keyMap,
   );
   assert.deepEqual(facts.colors, ['mattschwarz']);
   assert.deepEqual(facts.materials, ['Edelstahl', 'Glas']);
@@ -97,11 +109,38 @@ test('picks visual facts from nested multilingual specs', () => {
 });
 
 test('picks subject from tags when no name key exists', () => {
-  const facts = pickVisualFacts({ Weight: '1.5 kg' }, ['kettle']);
+  const { keyMap } = resolveProfile('electronics');
+  const facts = pickVisualFacts({ Weight: '1.5 kg' }, ['kettle'], 'product', keyMap);
   assert.equal(facts.subject, 'kettle');
-  const fallback = pickVisualFacts({});
+  assert.deepEqual(facts.heroFeatures, []);
+  const fallback = pickVisualFacts({}, [], 'product', keyMap);
   assert.equal(fallback.subject, 'product');
   assert.deepEqual(fallback.colors, []);
+});
+
+test('excludes prices, measurements and brand noise from hero features', () => {
+  const { keyMap } = resolveProfile('electronics');
+  const facts = pickVisualFacts(
+    {
+      Product: 'Acme kettle',
+      Color: 'matte black',
+      Price: '$49.99',
+      Capacity: '1.5 L',
+      Weight: '900 g',
+      Model: 'K-2000',
+      Feature: 'cordless pouring',
+    },
+    [],
+    'product',
+    keyMap,
+  );
+  assert.equal(facts.subject, 'Acme kettle');
+  assert.deepEqual(facts.colors, ['matte black']);
+  for (const feature of facts.heroFeatures) {
+    assert.ok(!feature.includes('$'));
+    assert.ok(!/\d/.test(feature) || /[a-zA-Z]{3,}/.test(feature));
+  }
+  assert.ok(facts.heroFeatures.includes('cordless pouring'));
 });
 
 test('guesses dialect from model names', () => {
@@ -230,15 +269,46 @@ test('parses proportions and ignores non-list colors', () => {
 });
 
 test('picks facts from nested groups', () => {
-  const facts = pickVisualFacts({
-    Details: { Color: 'red', Material: 'cotton' },
-  });
+  const { keyMap } = resolveProfile('apparel_footwear');
+  const facts = pickVisualFacts(
+    {
+      Details: { Color: 'red', Material: 'cotton' },
+    },
+    [],
+    'product',
+    keyMap,
+  );
   assert.deepEqual(facts.colors, ['red']);
   assert.deepEqual(facts.materials, ['cotton']);
 });
 
 test('picks facts from deeply nested groups', () => {
-  const facts = pickVisualFacts({ Group: { Sub: { Color: 'blue' } } }, ['vase']);
+  const { keyMap } = resolveProfile('apparel_footwear');
+  const facts = pickVisualFacts({ Group: { Sub: { Color: 'blue' } } }, ['vase'], 'product', keyMap);
   assert.deepEqual(facts.colors, ['blue']);
   assert.equal(facts.subject, 'vase');
+});
+
+test('custom keyMap additions merge with the family map', () => {
+  registerCategory(
+    'custom-test' as never,
+    {
+      family: 'goods',
+      keyMapAdd: { color: ['paint'] },
+    } as never,
+  );
+  const { keyMap } = resolveProfile('custom-test' as never);
+  assert.ok(keyMap.color.includes('paint'));
+  assert.ok(keyMap.color.includes('color'));
+  assert.ok(keyMap.subject.includes('brand'));
+  resetCategoryOverrides();
+  assert.ok(!listDomains().includes('custom-test' as never));
+});
+
+test('works without a keyMap and drops overlong values', () => {
+  const facts = pickVisualFacts({ Weight: '2 kg' }, ['kettle']);
+  assert.equal(facts.subject, 'kettle');
+  assert.deepEqual(facts.colors, []);
+  const long = pickVisualFacts({ Note: 'x'.repeat(81) }, [], 'product', {});
+  assert.deepEqual(long.heroFeatures, []);
 });
