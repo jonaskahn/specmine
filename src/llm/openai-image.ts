@@ -41,13 +41,21 @@ interface ImageApiBody {
 }
 
 function resolve(options: OpenAiImageOptions | undefined): ResolvedSettings {
-  return resolveSettings(
+  const settings = resolveSettings(
     options,
     process.env.SPECMINE_IMAGE_API_KEY ??
       process.env.SPECMINE_LLM_API_KEY ??
       process.env.OPENAI_API_KEY,
     { host: DEFAULT_OPENAI_API_HOST, model: DEFAULT_IMAGE_MODEL },
   );
+  return {
+    ...settings,
+    model:
+      options?.model ??
+      process.env.SPECMINE_IMAGE_MODEL ??
+      process.env.SPECMINE_LLM_MODEL ??
+      DEFAULT_IMAGE_MODEL,
+  };
 }
 
 function imageHost(): string {

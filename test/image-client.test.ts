@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { ExtractionError } from '../src/errors.js';
 import {
   createOpenAiImageProvider,
+  DEFAULT_IMAGE_MODEL,
   DEFAULT_IMAGE_TIMEOUT_MS,
   OpenAiImageClient,
 } from '../src/llm/openai-image.js';
@@ -161,6 +162,8 @@ test('resolves key and host from env with image-first precedence', async () => {
   assert.ok(captured.url.startsWith('http://img-host'));
   const headers = captured.init.headers as Record<string, string>;
   assert.equal(headers.authorization, 'Bearer img-key');
+  const body = JSON.parse(String(captured.init.body)) as { model: string };
+  assert.equal(body.model, DEFAULT_IMAGE_MODEL);
   void DEFAULT_IMAGE_TIMEOUT_MS;
   void bytesFetch;
 });
@@ -176,6 +179,15 @@ test('falls back to SPECMINE_LLM_* when no image settings exist', async () => {
   assert.equal(headers.authorization, 'Bearer llm-key');
   const body = JSON.parse(String(captured.init.body)) as { model: string };
   assert.equal(body.model, 'llm-image-model');
+});
+
+test('prefers SPECMINE_IMAGE_MODEL over the LLM model', async () => {
+  process.env.SPECMINE_IMAGE_MODEL = 'img-model';
+  process.env.SPECMINE_LLM_MODEL = 'llm-model';
+  const captured = imageFetch({ data: [{ b64_json: Buffer.from('x').toString('base64') }] });
+  await new OpenAiImageClient().generate({ prompt: 'x' });
+  const body = JSON.parse(String(captured.init.body)) as { model: string };
+  assert.equal(body.model, 'img-model');
 });
 
 test('omits auth header without a key and honors timeout plus signal', async () => {
