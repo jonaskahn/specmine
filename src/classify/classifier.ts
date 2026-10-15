@@ -1,6 +1,17 @@
 import type { CallOptions } from '../types.js';
 import type { ContentKind, DomainId, ScopeKind } from '../category/types.js';
 
+export type ClassifierMode = 'auto' | 'jev' | 'llm' | 'off';
+
+export type FallbackReason =
+  | 'user_override'
+  | 'no_key'
+  | 'disabled'
+  | 'jev_error'
+  | 'low_confidence'
+  | 'llm_error'
+  | 'classify_error';
+
 export interface Classification {
   kind: ContentKind;
   domain: DomainId;
@@ -9,6 +20,8 @@ export interface Classification {
   confidence: number;
   probabilities?: Record<string, number>;
   source: 'jev' | 'llm' | 'user' | 'fallback';
+  /** why a non-model classification was chosen; absent on successful Jev/LLM calls */
+  reason?: FallbackReason;
 }
 
 export interface ClassifierOptions extends CallOptions {
@@ -43,4 +56,8 @@ export function isKnownKind(value: unknown): value is ContentKind {
 
 export function isKnownScope(value: unknown): value is ScopeKind {
   return value === 'single' || value === 'multiple' || value === 'none';
+}
+
+export function isClassifierMode(value: unknown): value is ClassifierMode {
+  return value === 'auto' || value === 'jev' || value === 'llm' || value === 'off';
 }

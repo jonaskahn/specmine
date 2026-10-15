@@ -51,7 +51,7 @@ export class LlmClassifier implements ContentClassifier {
       raw = response.content;
     } catch {
       logger().warn('LLM classification failed, using generic classification');
-      return { ...GENERIC_CLASSIFICATION };
+      return { ...GENERIC_CLASSIFICATION, reason: 'llm_error' };
     }
     try {
       const parsed = JSON.parse(raw) as {
@@ -61,7 +61,7 @@ export class LlmClassifier implements ContentClassifier {
         visual?: unknown;
       };
       if (!isKnownKind(parsed.kind) || !isKnownScope(parsed.scope)) {
-        return { ...GENERIC_CLASSIFICATION };
+        return { ...GENERIC_CLASSIFICATION, reason: 'llm_error' };
       }
       const domain: DomainId = listDomains().includes(parsed.domain as DomainId)
         ? (parsed.domain as DomainId)
@@ -76,7 +76,7 @@ export class LlmClassifier implements ContentClassifier {
         source: 'llm',
       };
     } catch {
-      return { ...GENERIC_CLASSIFICATION };
+      return { ...GENERIC_CLASSIFICATION, reason: 'llm_error' };
     }
   }
 }

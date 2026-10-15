@@ -1,3 +1,5 @@
+import type { ClassifierMode } from './classify/classifier.js';
+
 export type SpecValue = string;
 
 export interface ProductSpec {
@@ -57,7 +59,10 @@ export interface ImageOutputOptions extends CallOptions {
 }
 
 export interface ClassifierConfig extends CallOptions {
-  provider?: 'auto' | 'jev' | 'llm' | 'off';
+  /** explicit mode wins over `provider` and SPECMINE_CLASSIFIER. Default: 'auto' */
+  mode?: ClassifierMode;
+  /** deprecated alias of `mode` */
+  provider?: ClassifierMode;
   apiKey?: string;
   apiHost?: string;
   model?: string;
@@ -81,6 +86,7 @@ export interface CategoryInfo {
   archetype: string;
   confidence: number;
   source: 'jev' | 'llm' | 'user' | 'fallback';
+  reason?: string;
 }
 
 export interface GeneratedImage {

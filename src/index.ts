@@ -84,8 +84,10 @@ export {
 } from './category/registry.js';
 export type {
   Classification,
+  ClassifierMode,
   ClassifierOptions,
   ContentClassifier,
+  FallbackReason,
 } from './classify/classifier.js';
 export { JevClassifier, createJevClassifier } from './classify/jev.js';
 export { LlmClassifier } from './classify/llm.js';

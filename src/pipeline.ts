@@ -2,8 +2,11 @@ import { familyOf, listDomains, resolveProfile } from './category/registry.js';
 import type { DomainId, ResolvedProfile } from './category/types.js';
 import {
   GENERIC_CLASSIFICATION,
+  isClassifierMode,
   type Classification,
+  type ClassifierMode,
   type ContentClassifier,
+  type FallbackReason,
 } from './classify/classifier.js';
 import { JevClassifier } from './classify/jev.js';
 import { LlmClassifier } from './classify/llm.js';
@@ -52,32 +55,40 @@ function callOptionsOf(options?: ProcessOptions): CallOptions {
 }
 
 function defaultClassifier(llm: LlmProvider, options?: ProcessOptions): ContentClassifier {
-  const provider = options?.classifier?.provider ?? 'auto';
-  if (provider === 'off') return { classify: async () => ({ ...GENERIC_CLASSIFICATION }) };
-  if (provider === 'llm') return new LlmClassifier(llm);
+  const fallback = (reason: FallbackReason): ContentClassifier => ({
+    classify: async () => ({ ...GENERIC_CLASSIFICATION, reason }),
+  });
+  const raw =
+    options?.classifier?.mode ??
+    options?.classifier?.provider ??
+    process.env.SPECMINE_CLASSIFIER;
+  const mode: ClassifierMode = isClassifierMode(raw) ? raw : 'auto';
+  if (mode === 'off') return fallback('disabled');
+  if (mode === 'llm') return new LlmClassifier(llm);
   const jevApiKey = options?.classifier?.apiKey ?? options?.apiKey ?? process.env.TYPESAFE_API_KEY;
-  if (provider === 'jev' || jevApiKey) {
+  if (mode === 'jev' || (mode === 'auto' && jevApiKey)) {
     const primary = new JevClassifier({
       ...(options?.classifier?.apiKey !== undefined ? { apiKey: options.classifier.apiKey } : {}),
       ...(options?.classifier?.apiHost !== undefined
         ? { apiHost: options.classifier.apiHost }
         : {}),
     });
-    const fallback = new LlmClassifier(llm);
     return {
       classify: async (text, opts) => {
         try {
           const result = await primary.classify(text, opts);
           const min = options?.classifier?.minConfidence ?? 0;
           if (result.confidence >= min) return result;
-          return fallback.classify(text, opts);
+          logger().warn('Jev confidence below minimum, using generic classification');
+          return { ...GENERIC_CLASSIFICATION, reason: 'low_confidence' };
         } catch {
-          return fallback.classify(text, opts);
+          logger().warn('Jev classification failed, using generic classification');
+          return { ...GENERIC_CLASSIFICATION, reason: 'jev_error' };
         }
       },
     };
   }
-  return new LlmClassifier(llm);
+  return fallback('no_key');
 }
 
 async function classifyInput(
@@ -94,6 +105,7 @@ async function classifyInput(
       visual: true,
       confidence: 1,
       source: 'user',
+      reason: 'user_override',
     };
   }
   try {
@@ -106,7 +118,7 @@ async function classifyInput(
     });
     return result;
   } catch {
-    return { ...GENERIC_CLASSIFICATION };
+    return { ...GENERIC_CLASSIFICATION, reason: 'classify_error' };
   }
 }
 
@@ -276,6 +288,7 @@ export class DefaultPipeline {
         archetype: profile.recipe.id,
         confidence: classification.confidence,
         source: classification.source,
+        ...(classification.reason !== undefined ? { reason: classification.reason } : {}),
       },
     };
     if (spec !== undefined) result.spec = spec;

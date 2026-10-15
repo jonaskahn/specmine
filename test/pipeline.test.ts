@@ -122,6 +122,7 @@ test('spec-only output is the default with user category', async () => {
   assert.deepEqual(result.spec, { Color: 'matte black', Capacity: '1.5 L' });
   assert.equal(result.image, undefined);
   assert.equal(result.category.source, 'user');
+  assert.equal(result.category.reason, 'user_override');
   assert.equal(result.category.domain, 'electronics');
   assert.equal(result.category.family, 'goods');
   assert.equal(calls(), 1);
@@ -326,6 +327,36 @@ test('classifier errors fall back to generic', async () => {
   const result = await pipe.process('anything');
   assert.equal(result.category.domain, 'general');
   assert.equal(result.category.source, 'fallback');
+  assert.equal(result.category.reason, 'classify_error');
+});
+
+test('auto mode without a jev key skips classification', async () => {
+  const built = createPipeline(
+    { reader: reader(TEXT), llm: scriptLlm([SPECS_JSON]).llm },
+    {},
+  );
+  const result = await built.process('anything');
+  assert.equal(result.category.source, 'fallback');
+  assert.equal(result.category.reason, 'no_key');
+});
+
+test('classifier mode wins over the deprecated provider alias', async () => {
+  const built = createPipeline(
+    { reader: reader(TEXT), llm: scriptLlm([SPECS_JSON]).llm },
+    { classifier: { mode: 'off', provider: 'llm' } },
+  );
+  const result = await built.process('anything');
+  assert.equal(result.category.reason, 'disabled');
+});
+
+test('SPECMINE_CLASSIFIER env selects the mode', async () => {
+  const make = () =>
+    createPipeline({ reader: reader(TEXT), llm: scriptLlm([SPECS_JSON]).llm }, {});
+  process.env.SPECMINE_CLASSIFIER = 'off';
+  assert.equal((await make().process('anything')).category.reason, 'disabled');
+  process.env.SPECMINE_CLASSIFIER = 'bogus';
+  assert.equal((await make().process('anything')).category.reason, 'no_key');
+  delete process.env.SPECMINE_CLASSIFIER;
 });
 
 test('user category accepts kind override and maps unknown domains', async () => {
@@ -333,6 +364,7 @@ test('user category accepts kind override and maps unknown domains', async () =>
   const result = await pipe.process('anything', { category: 'nope', kind: 'editorial' });
   assert.equal(result.category.domain, 'general');
   assert.equal(result.category.kind, 'editorial');
+  assert.equal(result.category.reason, 'user_override');
 });
 
 test('user category with non-content kind skips the image', async () => {
@@ -453,6 +485,7 @@ test('createPipeline honors classifier off and llm providers', async () => {
   );
   const llmResult = await llm.process('anything', { classifier: { model: 'test-model' } });
   assert.equal(llmResult.category.source, 'fallback');
+  assert.equal(llmResult.category.reason, 'llm_error');
   assert.ok(llmResult.spec);
 });
 
@@ -582,7 +615,7 @@ test('wraps plain errors from failing flows', async () => {
   assert.ok(oddResult.errors?.image?.message.includes('odd failure'));
 });
 
-test('falls back from jev to llm classification', async () => {
+test('low jev confidence falls back to generic without an llm call', async () => {
   process.env.TYPESAFE_API_KEY = 'k';
   const bodies: string[] = [];
   globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
@@ -602,18 +635,9 @@ test('falls back from jev to llm classification', async () => {
         { status: 200 },
       );
     }
-    const name = (JSON.parse(raw) as { response_format?: { json_schema?: { name?: string } } })
-      .response_format?.json_schema?.name;
-    const content =
-      name === 'classify_content'
-        ? JSON.stringify({
-            kind: 'editorial',
-            domain: 'news_analysis',
-            scope: 'single',
-            visual: false,
-          })
-        : SPECS_JSON;
-    return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: SPECS_JSON } }] }), {
+      status: 200,
+    });
   }) as typeof fetch;
   try {
     const pipe = createPipeline(undefined, {
@@ -622,38 +646,41 @@ test('falls back from jev to llm classification', async () => {
     const result = await pipe.process('Acme article text here.', {
       classifier: { minConfidence: 0.5 },
     });
-    assert.equal(result.category.source, 'llm');
-    assert.equal(result.category.domain, 'news_analysis');
+    assert.equal(result.category.source, 'fallback');
+    assert.equal(result.category.reason, 'low_confidence');
+    assert.ok(
+      bodies.every((raw) => {
+        const name = (JSON.parse(raw) as { response_format?: { json_schema?: { name?: string } } })
+          .response_format?.json_schema?.name;
+        return name !== 'classify_content';
+      }),
+    );
   } finally {
     delete (globalThis as { fetch?: typeof fetch }).fetch;
     delete process.env.TYPESAFE_API_KEY;
   }
 });
 
-test('falls back to llm classification when jev is down', async () => {
+test('jev outage falls back to generic without an llm call', async () => {
   process.env.TYPESAFE_API_KEY = 'k';
+  let llmCalls = 0;
   globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     if (String(url).includes('/v1/systemone')) {
       return new Response('bad gateway', { status: 502 });
     }
+    llmCalls += 1;
     const raw = String((init as RequestInit).body ?? '{}');
-    const name = (JSON.parse(raw) as { response_format?: { json_schema?: { name?: string } } })
-      .response_format?.json_schema?.name;
-    const content =
-      name === 'classify_content'
-        ? JSON.stringify({
-            kind: 'item_detail',
-            domain: 'electronics',
-            scope: 'single',
-            visual: true,
-          })
-        : SPECS_JSON;
-    return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: SPECS_JSON } }] }),
+      { status: 200 },
+    );
   }) as typeof fetch;
   try {
     const pipe = createPipeline(undefined, { classifier: { provider: 'jev' } });
     const result = await pipe.process('Acme kettle, black steel.');
-    assert.equal(result.category.source, 'llm');
+    assert.equal(result.category.source, 'fallback');
+    assert.equal(result.category.reason, 'jev_error');
+    assert.equal(llmCalls, 1);
   } finally {
     delete (globalThis as { fetch?: typeof fetch }).fetch;
     delete process.env.TYPESAFE_API_KEY;

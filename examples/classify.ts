@@ -2,8 +2,9 @@ import 'dotenv/config';
 import { analyze, registerCategory } from '../src/index.js';
 import type { DomainId } from '../src/index.js';
 
-// Auto: Jev decision model picks kind + domain (needs TYPESAFE_API_KEY,
-// otherwise an LLM classifier is used, otherwise generic)
+// Auto: Jev decision model picks kind + domain when TYPESAFE_API_KEY is set,
+// otherwise the general profile is used with zero classifier calls.
+// Opt into the LLM classifier with { classifier: { mode: 'llm' } }.
 const auto = await analyze('Acme espresso machine, 15 bar, 1.8 L tank.', {
   outputs: ['spec'],
 });

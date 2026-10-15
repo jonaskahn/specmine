@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { GENERIC_CLASSIFICATION, isKnownKind, isKnownScope } from '../src/classify/classifier.js';
+import { GENERIC_CLASSIFICATION, isClassifierMode, isKnownKind, isKnownScope } from '../src/classify/classifier.js';
 import { buildJevQuestions, createJevClassifier, JevClassifier } from '../src/classify/jev.js';
 import { LlmClassifier } from '../src/classify/llm.js';
 import type { LlmProvider, LlmRequest, LlmResponse } from '../src/llm/provider.js';
@@ -27,6 +27,13 @@ function fakeLlm(content: string | Error): LlmProvider {
 test.afterEach(() => {
   delete (globalThis as { fetch?: typeof fetch }).fetch;
   delete process.env.TYPESAFE_API_KEY;
+});
+
+test('isClassifierMode validates mode values', () => {
+  assert.equal(isClassifierMode('auto'), true);
+  assert.equal(isClassifierMode('jev'), true);
+  assert.equal(isClassifierMode('off'), true);
+  assert.equal(isClassifierMode('sometimes'), false);
 });
 
 test('isKnownKind and isKnownScope validate values', () => {
@@ -177,19 +184,19 @@ test('llm classifier parses classification JSON', async () => {
 });
 
 test('llm classifier falls back on llm error, bad json and bad values', async () => {
-  assert.deepEqual(
-    await new LlmClassifier(fakeLlm(new Error('down'))).classify('t'),
-    GENERIC_CLASSIFICATION,
-  );
-  assert.deepEqual(
-    await new LlmClassifier(fakeLlm('not json')).classify('t'),
-    GENERIC_CLASSIFICATION,
-  );
+  assert.deepEqual(await new LlmClassifier(fakeLlm(new Error('down'))).classify('t'), {
+    ...GENERIC_CLASSIFICATION,
+    reason: 'llm_error',
+  });
+  assert.deepEqual(await new LlmClassifier(fakeLlm('not json')).classify('t'), {
+    ...GENERIC_CLASSIFICATION,
+    reason: 'llm_error',
+  });
   assert.deepEqual(
     await new LlmClassifier(
       fakeLlm(JSON.stringify({ kind: 'weird', domain: 'x', scope: 'single', visual: true })),
     ).classify('t'),
-    GENERIC_CLASSIFICATION,
+    { ...GENERIC_CLASSIFICATION, reason: 'llm_error' },
   );
   assert.deepEqual(
     await new LlmClassifier(
