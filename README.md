@@ -1,8 +1,8 @@
 ```
 ███████╗ ██████╗  ███████╗  ██████╗ ███╗   ███╗ ██╗ ███╗   ██╗ ███████╗
 ██╔════╝ ██╔══██╗ ██╔════╝ ██╔════╝ ████╗ ████║ ██║ ████╗  ██║ ██╔════╝
-███████╗ ██████╔╝ █████╗   ██║      ██╔████╔██║ ██║ ██╔██╗ ██║ █████╗  
-╚════██║ ██╔═══╝  ██╔══╝   ██║      ██║╚██╔╝██║ ██║ ██║╚██╗██║ ██╔══╝  
+███████╗ ██████╔╝ █████╗   ██║      ██╔████╔██║ ██║ ██╔██╗ ██║ █████╗
+╚════██║ ██╔═══╝  ██╔══╝   ██║      ██║╚██╔╝██║ ██║ ██║╚██╗██║ ██╔══╝
 ███████║ ██║      ███████╗ ╚██████╗ ██║ ╚═╝ ██║ ██║ ██║ ╚████║ ███████╗
 ╚══════╝ ╚═╝      ╚══════╝  ╚═════╝ ╚═╝     ╚═╝ ╚═╝ ╚═╝  ╚═══╝ ╚══════╝
 ```
@@ -81,7 +81,8 @@ const spec = await extract(new URL('https://example.com/products/kettle'));
 HTML strings and blobs are detected and converted to Markdown automatically:
 
 ```ts
-const html = '<html><body><h1>Acme Kettle</h1><table><tr><td>Weight</td><td>1.5 kg</td></tr></table></body></html>';
+const html =
+  '<html><body><h1>Acme Kettle</h1><table><tr><td>Weight</td><td>1.5 kg</td></tr></table></body></html>';
 const spec = await extract(html);
 // { "Weight": "1.5 kg" }
 ```
@@ -168,6 +169,32 @@ const tags = await extractTags('The Acme Kettle holds 1.5L, £49.');
 ```
 
 Tags are normalized in code: lowercased, trimmed, deduplicated, max 8.
+
+### Combined spec + image output
+
+`analyze()` classifies the input (Jev decision model with LLM fallback),
+then extracts specs and/or generates a product image through LiteLLM:
+
+```ts
+import { analyze, generateImage } from '@jonaskahn/specmine';
+
+// Parallel: spec and image from the same content in one call
+const result = await analyze('The Acme Kettle holds 1.5L, matte black steel.', {
+  outputs: ['spec', 'image'],
+  mode: 'parallel', // or 'sequential': extract spec first, render image from it
+});
+// { category: { kind, domain, family, archetype, confidence },
+//   spec: { ... }, image: { blob, mimeType, prompt } }
+
+// Image only
+const image = await generateImage(htmlOrPdf, { category: 'electronics' });
+```
+
+Image generation uses the OpenAI-compatible `/images/generations` endpoint,
+so a LiteLLM proxy works with `SPECMINE_IMAGE_API_HOST` + `SPECMINE_IMAGE_MODEL`.
+Skip the classifier with `category` (e.g. `electronics`, `apparel_footwear`,
+`real_estate`); use `mode: 'sequential'` to render from the extracted spec
+instead of a separate visual pass.
 
 ### Timeouts and cancellation
 
