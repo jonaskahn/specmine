@@ -1,5 +1,5 @@
 import { ExtractionError } from '../errors.js';
-import { logger } from '../log.js';
+import { debugBody, logger } from '../log.js';
 import type { CallOptions } from '../types.js';
 import { requestJson } from './http.js';
 import type { LlmProviderOptions } from './provider.js';
@@ -131,6 +131,7 @@ export class OpenAiImageClient implements ImageProvider {
       apiHost,
       chars: prompt.length,
     });
+    debugBody('Image generation request body', JSON.parse(body));
     const callOptions: CallOptions = {
       timeoutMs: options?.timeoutMs ?? DEFAULT_IMAGE_TIMEOUT_MS,
       ...(options?.signal !== undefined ? { signal: options.signal } : {}),
@@ -148,6 +149,7 @@ export class OpenAiImageClient implements ImageProvider {
       callOptions,
     );
     const parsed = responseBody as ImageApiBody;
+    debugBody('Image generation response body', parsed);
     const item = parsed.data?.[0];
     if (!item) {
       throw new ExtractionError('LLM_ERROR', 'Image API returned no data');

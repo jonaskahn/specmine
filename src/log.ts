@@ -153,3 +153,39 @@ export function logger(): LogMethods {
 export function resetLogger(): void {
   cached = undefined;
 }
+
+export const DEBUG_BODY_LIMIT = 4000;
+
+function redactBody(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactBody);
+  if (typeof value === 'object' && value !== null) {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (/authorization|x-api-key|api[_-]?key/i.test(key)) {
+        out[key] = '<redacted>';
+      } else if (key === 'b64_json' && typeof entry === 'string') {
+        out[key] = `<base64 ${entry.length} chars>`;
+      } else if (key === 'url' && typeof entry === 'string' && entry.length > 200) {
+        out[key] = `${entry.slice(0, 80)}…<${entry.length} chars>`;
+      } else {
+        out[key] = redactBody(entry);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
+export function formatBody(value: unknown, limit: number = DEBUG_BODY_LIMIT): string {
+  let text: string;
+  try {
+    text = JSON.stringify(redactBody(value), null, 2) ?? String(value);
+  } catch {
+    text = String(value);
+  }
+  return text.length > limit ? `${text.slice(0, limit)}\n…truncated` : text;
+}
+
+export function debugBody(label: string, value: unknown): void {
+  logger().debug(label, { body: formatBody(value) });
+}

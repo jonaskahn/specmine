@@ -1,7 +1,7 @@
 import { listDomains, getDomainProfile } from '../category/registry.js';
 import type { ContentKind, DomainId, ScopeKind } from '../category/types.js';
 import { requestJson } from '../llm/http.js';
-import { logger } from '../log.js';
+import { debugBody, logger } from '../log.js';
 import {
   GENERIC_CLASSIFICATION,
   isKnownKind,
@@ -133,6 +133,8 @@ export class JevClassifier implements ContentClassifier {
       options?.model ?? this.options?.model ?? process.env.JEV_MODEL ?? DEFAULT_JEV_MODEL;
     const state = text.slice(0, JEV_STATE_LIMIT);
     logger().debug('Jev classification request', { model, chars: state.length });
+    const payload = { model, state, questions: buildJevQuestions() };
+    debugBody('Jev classification request body', payload);
     const { body } = await requestJson(
       `${apiHost}/v1/systemone`,
       {
@@ -141,10 +143,11 @@ export class JevClassifier implements ContentClassifier {
           'content-type': 'application/json',
           ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
         },
-        body: JSON.stringify({ model, state, questions: buildJevQuestions() }),
+        body: JSON.stringify(payload),
       },
       options,
     );
+    debugBody('Jev classification response body', body);
     const parsed = parseResponse(body);
     if (!parsed) {
       logger().warn('Jev response unparseable, using generic classification');

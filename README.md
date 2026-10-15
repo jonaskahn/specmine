@@ -298,8 +298,10 @@ export SPECMINE_LOG_DRIVER=auto   # auto-detects pino, then winston
 ```
 
 Levels: `silent` · `fatal` · `error` · `warn` · `info` · `debug` · `trace`.
-API keys and prompt content are never logged — only lengths, counts,
-statuses, and durations.
+At `debug` level the LLM, image and Jev calls also log their formatted
+request and response bodies: indented JSON with credentials redacted,
+embedded base64 shortened to a length marker, and output capped at 4000
+characters. API keys and prompt content never appear at `info` or above.
 
 ### Advanced: custom pipeline
 

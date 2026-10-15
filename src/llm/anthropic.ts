@@ -1,5 +1,5 @@
 import { ExtractionError } from '../errors.js';
-import { logger } from '../log.js';
+import { debugBody, logger } from '../log.js';
 import type { CallOptions } from '../types.js';
 import { requestJson } from './http.js';
 import type {
@@ -112,6 +112,7 @@ export class AnthropicClient implements LlmProvider {
       apiHost,
       chars: body.length,
     });
+    debugBody('Anthropic LLM request body', JSON.parse(body));
     const { body: responseBody } = await requestJson(
       `${apiHost}/v1/messages`,
       {
@@ -126,6 +127,7 @@ export class AnthropicClient implements LlmProvider {
       options,
     );
     const response = responseBody as AnthropicResponse;
+    debugBody('Anthropic LLM response body', response);
     const toolUse = response.content?.find((block) => block.type === 'tool_use');
     if (toolUse?.input !== undefined) {
       return { content: JSON.stringify(toolUse.input) };
