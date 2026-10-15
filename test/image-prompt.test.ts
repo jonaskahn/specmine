@@ -18,10 +18,20 @@ import {
 } from '../src/image/hygiene.js';
 import { buildImagePrompt } from '../src/image/prompt-builder.js';
 
-test('visual facts schema requires subject, colors, materials and features', () => {
+test('visual facts schema lists every property as required', () => {
   assert.deepEqual(
     [...VISUAL_FACTS_SCHEMA.required],
-    ['subject', 'colors', 'materials', 'heroFeatures'],
+    [
+      'subject',
+      'shape',
+      'proportions',
+      'colors',
+      'materials',
+      'finish',
+      'heroFeatures',
+      'viewpoint',
+      'setting',
+    ],
   );
 });
 

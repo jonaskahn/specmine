@@ -49,7 +49,20 @@ export const VISUAL_FACTS_SCHEMA = {
     viewpoint: { type: 'string' },
     setting: { type: 'string' },
   },
-  required: ['subject', 'colors', 'materials', 'heroFeatures'],
+  // Strict structured-output backends (e.g. Azure via LiteLLM) require every
+  // property to be listed here. Unknown optionals use "" or [] — the parser
+  // treats those as absent, so grounding is unchanged.
+  required: [
+    'subject',
+    'shape',
+    'proportions',
+    'colors',
+    'materials',
+    'finish',
+    'heroFeatures',
+    'viewpoint',
+    'setting',
+  ],
   additionalProperties: false,
 } as const;
 

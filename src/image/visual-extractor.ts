@@ -6,7 +6,7 @@ import { parseVisualFacts, VISUAL_FACTS_SCHEMA, type VisualFacts } from './facts
 
 const VISUAL_SYSTEM_PROMPT = `You are a visual-facts extraction engine inside an automated product-rendering pipeline. Your output is consumed directly by code that builds an image-generation prompt, never read by a person.
 Extract ONLY visually depictable facts explicitly stated in the content — never infer, assume or fabricate. Internal or non-visual attributes (capacity, weight, voltage, price, SKU, warranty) must be excluded. Each fact must be traceable to text actually present in the content; when in doubt, omit it.
-Respond with a single JSON object and nothing else: {"subject": "<concrete product noun>", "shape": "<shape>", "proportions": "<proportions>", "colors": ["<color with finish>"], "materials": ["<material>"], "finish": "<matte/glossy/...>", "heroFeatures": ["<visible part, max 4>"], "viewpoint": "<angle if stated>", "setting": "<setting if stated>"}. Omit optional keys when unstated rather than guessing.`;
+Respond with a single JSON object and nothing else: {"subject": "<concrete product noun>", "shape": "<shape>", "proportions": "<proportions>", "colors": ["<color with finish>"], "materials": ["<material>"], "finish": "<matte/glossy/...>", "heroFeatures": ["<visible part, max 4>"], "viewpoint": "<angle if stated>", "setting": "<setting if stated>"}. Use "" or [] for anything unstated rather than guessing.`;
 
 export class VisualExtractor {
   constructor(private readonly llm: LlmProvider) {}
