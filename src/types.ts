@@ -52,6 +52,8 @@ export interface ImageOutputOptions extends CallOptions {
   background?: string;
   style?: string;
   dialect?: string;
+  /** include the internal render prompt in the result for debugging. Default: false */
+  includePrompt?: boolean;
 }
 
 export interface ClassifierConfig extends CallOptions {
@@ -84,7 +86,13 @@ export interface CategoryInfo {
 export interface GeneratedImage {
   blob: Blob;
   mimeType: string;
-  prompt: string;
+  /** raw base64 image bytes, no data-url prefix */
+  base64: string;
+  /** ready for <img src>: `data:<mimeType>;base64,<base64>` */
+  dataUrl: string;
+  /** only present when image.includePrompt is true */
+  prompt?: string;
+  /** only present when image.includePrompt is true */
   revisedPrompt?: string;
 }
 

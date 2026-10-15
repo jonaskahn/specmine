@@ -12,6 +12,7 @@ import {
   createPipeline,
   DefaultPipeline,
   generateImage,
+  generateImageBase64,
   imageOptionsFrom,
   providerFrom,
 } from '../src/pipeline.js';
@@ -133,14 +134,34 @@ test('image-only output uses the dynamic visual flow', async () => {
     productClassification(),
     imageProvider({ seen, revisedPrompt: 'rev' }),
   );
-  const result = await pipe.process('anything', { outputs: ['image'] });
+  const result = await pipe.process('anything', {
+    outputs: ['image'],
+    image: { includePrompt: true },
+  });
   assert.ok(result.image);
   assert.equal(result.image?.mimeType, 'image/png');
-  assert.ok(result.image?.prompt.includes('electric kettle'));
+  assert.ok(result.image?.prompt?.includes('electric kettle'));
   assert.equal(result.image?.revisedPrompt, 'rev');
+  assert.equal(
+    Buffer.from(result.image?.base64 ?? '', 'base64').toString(),
+    Buffer.from(new Uint8Array([1, 2, 3])).toString(),
+  );
+  assert.ok(result.image?.dataUrl.startsWith('data:image/png;base64,'));
   assert.ok(await result.image?.blob.arrayBuffer());
   assert.equal(result.spec, undefined);
   assert.equal(seen[0]?.size, '1024x1024');
+});
+
+test('image prompt stays hidden unless requested', async () => {
+  const { pipeline: pipe } = pipeline(
+    [VISUAL_JSON],
+    productClassification(),
+    imageProvider({ revisedPrompt: 'rev' }),
+  );
+  const result = await pipe.process('anything', { outputs: ['image'] });
+  assert.ok(result.image?.base64);
+  assert.equal(result.image?.prompt, undefined);
+  assert.equal(result.image?.revisedPrompt, undefined);
 });
 
 test('parallel mode runs spec and image together', async () => {
@@ -161,9 +182,10 @@ test('sequential mode builds the image from the extracted spec', async () => {
   const result = await pipe.process('anything', {
     outputs: ['spec', 'image'],
     mode: 'sequential',
+    image: { includePrompt: true },
   });
   assert.ok(result.spec);
-  assert.ok(result.image?.prompt.includes('electric kettle'));
+  assert.ok(result.image?.prompt?.includes('electric kettle'));
   assert.equal(calls(), 1);
 });
 
@@ -172,9 +194,10 @@ test('sequential mode falls back to dynamic flow on thin specs', async () => {
   const result = await pipe.process('anything', {
     outputs: ['spec', 'image'],
     mode: 'sequential',
+    image: { includePrompt: true },
   });
   assert.deepEqual(result.spec, { Weight: '2 kg' });
-  assert.ok(result.image?.prompt.includes('electric kettle'));
+  assert.ok(result.image?.prompt?.includes('electric kettle'));
 });
 
 test('sequential mode still renders image when spec fails', async () => {
@@ -438,11 +461,23 @@ test('top-level generateImage returns the blob and throws when skipped', async (
   try {
     const image = await generateImage('Acme kettle, matte black steel.');
     assert.equal(image.mimeType, 'image/png');
-    assert.ok(image.prompt.includes('electric kettle'));
+    assert.ok(image.base64.length > 0);
+    assert.ok(image.dataUrl.startsWith('data:image/png;base64,'));
+    assert.equal(image.prompt, undefined);
     await assert.rejects(
       generateImage('Acme Corp company profile and history.', { category: 'organization_person' }),
       (error: unknown) => error instanceof ExtractionError && error.code === 'UNSUPPORTED_INPUT',
     );
+  } finally {
+    delete (globalThis as { fetch?: typeof fetch }).fetch;
+  }
+});
+
+test('top-level generateImageBase64 returns raw base64', async () => {
+  routeFetch();
+  try {
+    const base64 = await generateImageBase64('Acme kettle, matte black steel.');
+    assert.equal(Buffer.from(base64, 'base64').toString(), 'img');
   } finally {
     delete (globalThis as { fetch?: typeof fetch }).fetch;
   }

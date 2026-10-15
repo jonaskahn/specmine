@@ -333,8 +333,17 @@ export class DefaultPipeline {
     const blob = new Blob([generated.bytes as Uint8Array<ArrayBuffer>], {
       type: generated.mimeType,
     });
-    const result: GeneratedImage = { blob, mimeType: generated.mimeType, prompt };
-    if (generated.revisedPrompt !== undefined) result.revisedPrompt = generated.revisedPrompt;
+    const base64 = Buffer.from(generated.bytes).toString('base64');
+    const result: GeneratedImage = {
+      blob,
+      mimeType: generated.mimeType,
+      base64,
+      dataUrl: `data:${generated.mimeType};base64,${base64}`,
+    };
+    if (options?.image?.includePrompt === true) {
+      result.prompt = prompt;
+      if (generated.revisedPrompt !== undefined) result.revisedPrompt = generated.revisedPrompt;
+    }
     return result;
   }
 }
@@ -397,6 +406,13 @@ export async function generateImage(
   const result = await analyze(input, { ...options, outputs: ['image'] });
   if (result.image) return result.image;
   throw result.errors!.image!;
+}
+
+export async function generateImageBase64(
+  input: ExtractInput,
+  options?: ProcessOptions,
+): Promise<string> {
+  return (await generateImage(input, options)).base64;
 }
 
 export { getDomainProfile, resolveProfile, registerCategory } from './category/registry.js';

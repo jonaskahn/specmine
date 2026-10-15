@@ -110,4 +110,10 @@ export type { PromptDialect, PromptDialectId } from './image/dialects.js';
 export { buildImagePrompt } from './image/prompt-builder.js';
 export { sanitizePrompt, stripMarketing, stripMeasurements } from './image/hygiene.js';
 export type { PipelineDependencies } from './pipeline.js';
-export { DefaultPipeline, createPipeline, analyze, generateImage } from './pipeline.js';
+export {
+  DefaultPipeline,
+  createPipeline,
+  analyze,
+  generateImage,
+  generateImageBase64,
+} from './pipeline.js';
