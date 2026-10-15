@@ -28,6 +28,9 @@ export interface LlmRequest {
   includeTags?: boolean;
   /** request the structured output to return tags only */
   tagsOnly?: boolean;
+  /** override the structured-output schema (tool name stays provider default) */
+  schema?: unknown;
+  schemaName?: string;
 }
 
 export interface LlmUsage {

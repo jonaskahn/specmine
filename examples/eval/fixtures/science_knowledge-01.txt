@@ -1,0 +1,10 @@
+How photosynthesis works, simply: plants turn light + CO2 + water into sugar.
+Light reactions (thylakoids): chlorophyll catches photons, splits water (oxygen out), makes ATP + NADPH.
+Calvin cycle (stroma): Rubisco fixes CO2 onto RuBP, ATP/NADPH build G3P — some becomes glucose, rest recycles.
+Efficiency only 3–6%: most light missed, photorespiration wastes energy in heat. C4 plants (corn) do better.
+Why it matters: every joule of food + fossil fuel is old sunlight; engineers copy it for solar fuels.
+Try at home: leaf + sunlight + iodine turns starch blue-black — full protocol + safety notes below.
+--- Page furniture: Learn Home | Biology | Chemistry | Physics | Search
+Ad: Tutoring from €19/h — first lesson free
+Related: Cellular respiration explained · Why leaves turn red · Build a mini greenhouse
+Quiz: 5 questions · Worksheet PDF · Cookie settings · © 2026 ---

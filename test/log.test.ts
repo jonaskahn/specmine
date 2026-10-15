@@ -3,7 +3,15 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createLogger, logger, resolveDriver, resolveLevel, resetLogger } from '../src/log.js';
+import {
+  createLogger,
+  debugBody,
+  formatBody,
+  logger,
+  resolveDriver,
+  resolveLevel,
+  resetLogger,
+} from '../src/log.js';
 
 const ENV_VARS = [
   'SPECMINE_LOG_LEVEL',
@@ -274,3 +282,38 @@ function writeMockModule(source: string): string {
   writeFileSync(path, source);
   return path;
 }
+
+test('formatBody pretty-prints scalars, arrays and nested objects', () => {
+  assert.equal(formatBody('hi'), '"hi"');
+  assert.equal(formatBody(42), '42');
+  assert.equal(formatBody(undefined), 'undefined');
+  assert.ok(formatBody([{ a: 1 }, 'x']).includes('\n'));
+});
+
+test('formatBody redacts credentials and shortens payloads', () => {
+  const out = formatBody({
+    headers: { authorization: 'Bearer k', 'x-api-key': 'k', apiKey: 'k' },
+    data: [
+      { b64_json: 'abcd', url: `https://x.test/${'y'.repeat(300)}`, short: 'https://x.test/i.png' },
+    ],
+    nested: { b64_json: null, url: 42 },
+  });
+  assert.ok(!out.includes('Bearer k'));
+  assert.ok(out.includes('<redacted>'));
+  assert.ok(out.includes('<base64 4 chars>'));
+  assert.ok(out.includes('<315 chars>'));
+  assert.ok(out.includes('https://x.test/i.png'));
+});
+
+test('formatBody truncates overlong output and falls back on circular values', () => {
+  const long = formatBody({ text: 'z'.repeat(100) }, 20);
+  assert.ok(long.endsWith('…truncated'));
+  assert.equal(formatBody({ text: 'short' }, 1000).endsWith('…truncated'), false);
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  assert.ok(formatBody(circular).includes('[object Object]'));
+});
+
+test('debugBody logs without throwing', () => {
+  debugBody('label', { a: 1 });
+});

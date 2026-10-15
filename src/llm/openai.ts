@@ -1,5 +1,5 @@
 import { ExtractionError } from '../errors.js';
-import { logger } from '../log.js';
+import { debugBody, logger } from '../log.js';
 import type { CallOptions } from '../types.js';
 import { requestJson } from './http.js';
 import type {
@@ -56,6 +56,13 @@ export class OpenAiClient implements LlmProvider {
 
   async complete(request: LlmRequest, options?: CallOptions): Promise<LlmResponse> {
     const { apiHost, apiKey, model } = this.settings;
+    const schema =
+      request.schema ??
+      (request.tagsOnly === true
+        ? TAGS_ONLY_SCHEMA
+        : request.includeTags === true
+          ? TAGGED_SPECS_SCHEMA
+          : SPECS_SCHEMA);
     const body = JSON.stringify({
       model: request.model ?? model,
       messages: request.messages.map((message) => ({
@@ -67,14 +74,9 @@ export class OpenAiClient implements LlmProvider {
       response_format: {
         type: 'json_schema',
         json_schema: {
-          name: 'extracted_specs',
+          name: request.schemaName ?? 'extracted_specs',
           strict: true,
-          schema:
-            request.tagsOnly === true
-              ? TAGS_ONLY_SCHEMA
-              : request.includeTags === true
-                ? TAGGED_SPECS_SCHEMA
-                : SPECS_SCHEMA,
+          schema,
         },
       },
     });
@@ -83,6 +85,7 @@ export class OpenAiClient implements LlmProvider {
       apiHost,
       chars: body.length,
     });
+    debugBody('OpenAI-compatible LLM request body', JSON.parse(body));
     const { body: responseBody } = await requestJson(
       `${apiHost}/chat/completions`,
       {
@@ -96,6 +99,7 @@ export class OpenAiClient implements LlmProvider {
       options,
     );
     const openAiBody = responseBody as OpenAiBody;
+    debugBody('OpenAI-compatible LLM response body', openAiBody);
     const content = openAiBody.choices?.[0]?.message?.content;
     if (typeof content !== 'string') {
       throw new ExtractionError('LLM_ERROR', 'LLM response is missing message content');

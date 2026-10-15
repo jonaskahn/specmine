@@ -1,9 +1,19 @@
 export type {
   CallOptions,
+  CategoryInfo,
+  ClassifierConfig,
   ExtractInput,
   ExtractOptions,
   ExtractionErrorCode,
+  GeneratedImage,
+  ImageGrounding,
+  ImageOutputOptions,
   NestedSpecs,
+  OutputKind,
+  ProcessErrors,
+  ProcessMode,
+  ProcessOptions,
+  ProcessResult,
   ProductSpec,
   SpecsResult,
   TaggedResult,
@@ -54,3 +64,59 @@ export {
 } from './llm/resilience.js';
 export type { SpecValidationResult, SpecValidator } from './spec/validator.js';
 export { JsonSpecValidator } from './spec/validator.js';
+export type {
+  ArchetypeId,
+  ArchetypeRecipe,
+  ContentKind,
+  DomainId,
+  DomainProfile,
+  FamilyId,
+  FamilyProfile,
+  ResolvedProfile,
+  ScopeKind,
+} from './category/types.js';
+export {
+  familyOf,
+  getDomainProfile,
+  listDomains,
+  registerCategory,
+  resetCategoryOverrides,
+  resolveProfile,
+} from './category/registry.js';
+export type {
+  Classification,
+  ClassifierMode,
+  ClassifierOptions,
+  ContentClassifier,
+  FallbackReason,
+} from './classify/classifier.js';
+export { JevClassifier, createJevClassifier } from './classify/jev.js';
+export { LlmClassifier } from './classify/llm.js';
+export type { PromptMode } from './prompts/spec.js';
+export { buildSystemPrompt } from './prompts/spec.js';
+export type {
+  ImageProvider,
+  ImageGenerateRequest,
+  ImageGenerateResult,
+} from './llm/openai-image.js';
+export {
+  OpenAiImageClient,
+  createOpenAiImageProvider,
+  DEFAULT_IMAGE_MODEL,
+} from './llm/openai-image.js';
+export type { VisualFacts } from './image/facts.js';
+export { parseVisualFacts, hasEnoughFacts, countFilledSlots } from './image/facts.js';
+export { VisualExtractor } from './image/visual-extractor.js';
+export { pickVisualFacts } from './image/fact-picker.js';
+export { guessDialect, PROMPT_DIALECTS } from './image/dialects.js';
+export type { PromptDialect, PromptDialectId } from './image/dialects.js';
+export { buildImagePrompt } from './image/prompt-builder.js';
+export { sanitizePrompt, stripMarketing, stripMeasurements } from './image/hygiene.js';
+export type { PipelineDependencies } from './pipeline.js';
+export {
+  DefaultPipeline,
+  createPipeline,
+  analyze,
+  generateImage,
+  generateImageBase64,
+} from './pipeline.js';

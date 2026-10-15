@@ -8,3 +8,7 @@ coverage/
 .codegraph/
 .idea/
 integrate-test.ts
+
+# eval100 local sweep results — never commit
+examples/eval/report*.csv
+examples/eval/images/

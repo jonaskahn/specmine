@@ -1,8 +1,8 @@
 ```
 ███████╗ ██████╗  ███████╗  ██████╗ ███╗   ███╗ ██╗ ███╗   ██╗ ███████╗
 ██╔════╝ ██╔══██╗ ██╔════╝ ██╔════╝ ████╗ ████║ ██║ ████╗  ██║ ██╔════╝
-███████╗ ██████╔╝ █████╗   ██║      ██╔████╔██║ ██║ ██╔██╗ ██║ █████╗  
-╚════██║ ██╔═══╝  ██╔══╝   ██║      ██║╚██╔╝██║ ██║ ██║╚██╗██║ ██╔══╝  
+███████╗ ██████╔╝ █████╗   ██║      ██╔████╔██║ ██║ ██╔██╗ ██║ █████╗
+╚════██║ ██╔═══╝  ██╔══╝   ██║      ██║╚██╔╝██║ ██║ ██║╚██╗██║ ██╔══╝
 ███████║ ██║      ███████╗ ╚██████╗ ██║ ╚═╝ ██║ ██║ ██║ ╚████║ ███████╗
 ╚══════╝ ╚═╝      ╚══════╝  ╚═════╝ ╚═╝     ╚═╝ ╚═╝ ╚═╝  ╚═══╝ ╚══════╝
 ```
@@ -81,7 +81,8 @@ const spec = await extract(new URL('https://example.com/products/kettle'));
 HTML strings and blobs are detected and converted to Markdown automatically:
 
 ```ts
-const html = '<html><body><h1>Acme Kettle</h1><table><tr><td>Weight</td><td>1.5 kg</td></tr></table></body></html>';
+const html =
+  '<html><body><h1>Acme Kettle</h1><table><tr><td>Weight</td><td>1.5 kg</td></tr></table></body></html>';
 const spec = await extract(html);
 // { "Weight": "1.5 kg" }
 ```
@@ -169,6 +170,155 @@ const tags = await extractTags('The Acme Kettle holds 1.5L, £49.');
 
 Tags are normalized in code: lowercased, trimmed, deduplicated, max 8.
 
+### Combined spec + image output
+
+`analyze()` classifies the input, then extracts specs and/or generates
+a product image through LiteLLM. Each category gets its own spec hints,
+visual slots and render style — see "Classification" below:
+
+```ts
+import { analyze, generateImage } from '@jonaskahn/specmine';
+
+// Parallel: spec and image from the same content in one call
+const result = await analyze('The Acme Kettle holds 1.5L, matte black steel.', {
+  outputs: ['spec', 'image'],
+  mode: 'parallel', // or 'sequential': extract spec first, render image from it
+});
+// { category: { kind, domain, family, archetype, confidence },
+//   spec: { ... }, image: { blob, mimeType, base64, dataUrl } }
+
+// Image only — the prompt is built internally, the result is the image itself
+const image = await generateImage(htmlOrPdf, { category: 'electronics' });
+// image.base64 — raw base64, no prefix
+// image.dataUrl — "data:image/png;base64,...", ready for <img src>
+// import { generateImageBase64 } from '@jonaskahn/specmine'; // base64 string only
+
+// Pass image: { includePrompt: true } to also get the internal render prompt
+// (and the provider's revised prompt) back in the result for debugging.
+```
+
+Image generation uses the OpenAI-compatible `/images/generations` endpoint,
+so a LiteLLM proxy works with `SPECMINE_IMAGE_API_HOST` + `SPECMINE_IMAGE_MODEL`.
+Each image setting falls back to its `SPECMINE_LLM_*` counterpart when unset
+(`SPECMINE_IMAGE_API_KEY` → `SPECMINE_LLM_API_KEY`,
+`SPECMINE_IMAGE_API_HOST` → `SPECMINE_LLM_API_HOST`,
+`SPECMINE_IMAGE_MODEL` → `SPECMINE_LLM_MODEL`), so one base URL and key
+covers both text and image calls.
+Skip the classifier with `category` (e.g. `electronics`, `apparel_footwear`,
+`real_estate`); use `mode: 'sequential'` to render from the extracted spec
+instead of a separate visual pass.
+
+### Classification
+
+`analyze()` routes the input through a classifier to pick the category profile
+(kind, domain, image archetype). Modes, in order of precedence —
+`classifier.mode` option, then `classifier.provider` (deprecated alias),
+then `SPECMINE_CLASSIFIER`, default `auto`:
+
+| mode   | behaviour                                                                                                                             |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto` | Jev when a key is set (`classifier.apiKey` → `apiKey` → `TYPESAFE_API_KEY`); otherwise the general profile with zero classifier calls |
+| `jev`  | Jev only — errors and low confidence fall back to the general profile, no silent LLM call                                             |
+| `llm`  | Small structured-output LLM call on your text provider (opt-in)                                                                       |
+| `off`  | Always the general profile                                                                                                            |
+
+Jev answers in ~~70–500 ms and bills input tokens only (~~$0.042/1M, output
+free), up to 10 questions per request. Note the 60 req/min self-serve rate
+limit. `result.category` carries `source` (`jev` | `llm` | `user` |
+`fallback`) and, on fallback, a `reason` (`no_key`, `disabled`,
+`jev_error`, `low_confidence`, `llm_error`, `classify_error`,
+`user_override`).
+
+Custom domains inherit a family profile:
+
+```ts
+import { registerCategory } from '@jonaskahn/specmine';
+
+registerCategory('wine' as DomainId, {
+  family: 'goods',
+  subjectNoun: 'bottle',
+  specHints: ['vintage', 'region', 'grape variety'],
+  specIgnore: ['serving suggestions'],
+  notDepictable: ['price', 'vintage year'],
+  archetype: 'food_shot',
+  defaultStyle: 'elegant bottle photo',
+  defaultSize: '1024x1024',
+  allowImage: true,
+});
+```
+
+### Workflow
+
+```
+input (string | Blob | URL)
+  │  read once — HTML→Markdown, PDF→Markdown, '' → EMPTY_INPUT
+  ▼
+classify ──► { kind, domain, scope, visual } ──► category profile
+  │                                              (spec hints + ignore list,
+  │                                               visual slots, archetype)
+  ▼
+outputs? ── ['spec'] ──► spec flow ──────────────────────►─┐
+         └─ ['image'] ─► image gate ──► image flow ──►─┤
+                                                      ▼
+                              { category, spec?, image?, errors? }
+```
+
+Only requested flows run. One flow failing never loses the other — the
+failure lands in `errors` (`{ spec?, image? }`). With `failFast: true` the
+first failure throws instead. If every requested flow fails, it throws.
+
+```
+classifier modes (classifier.mode → provider → SPECMINE_CLASSIFIER → auto)
+
+  auto ─┬─ key set ──► Jev ─┬─ ok ──────────► { kind, domain, … }
+        │                   ├─ low confidence ► general (low_confidence)
+        │                   └─ error ─────────► general (jev_error)
+        └─ no key ───► general, zero calls (no_key)
+
+  jev ──► Jev only, same fallbacks, never a silent LLM call
+  llm ──► small structured-output call on your text provider
+  off ──► general profile (disabled)
+```
+
+```
+parallel (default)                    sequential
+
+  ┌─ spec flow ────────────┐            spec flow
+  │ text + category prompt │                 │
+  │  → structured spec    │                 ▼
+  └────────┬───────────────┘            enough visual facts?
+           │                           ┌─ yes ─► render from spec
+  ┌─ image flow ───────────┐           └─ no ──► dynamic flow
+  │ visual-facts prompt    │
+  │  → facts → render      │           (also used when the spec
+  └────────┬───────────────┘            call itself fails)
+           ▼
+  Promise.allSettled → merged result
+```
+
+```
+image flow detail
+
+  facts ──► prompt builder ──► POST {apiHost}/images/generations
+  │         (archetype recipe      { model, prompt, size, n: 1 }
+  │          + model dialect,   │
+  │          prices/SKUs/units  ▼
+  │          stripped)      b64_json → bytes ─┐
+  │                         url ──► fetch ────┤
+  │                                           ▼
+  │                       { blob, mimeType, base64, dataUrl }
+  │                       (+ prompt only with includePrompt: true)
+  │
+  ├─ dynamic: visual-facts LLM call on the cleaned text
+  │           (refuses when facts are too thin for the category)
+  └─ from-spec: category key-map picks depictable spec keys
+                (falls back to dynamic when the spec is thin)
+
+  skipped without a call when: not depictable, non_content,
+  collection/multiple scope, policy_legal, or allowImage: false
+  → errors.image = UNSUPPORTED_INPUT, other outputs unaffected
+```
+
 ### Timeouts and cancellation
 
 Abort a hanging LLM call after N milliseconds, or wire in your own signal:
@@ -220,8 +370,10 @@ export SPECMINE_LOG_DRIVER=auto   # auto-detects pino, then winston
 ```
 
 Levels: `silent` · `fatal` · `error` · `warn` · `info` · `debug` · `trace`.
-API keys and prompt content are never logged — only lengths, counts,
-statuses, and durations.
+At `debug` level the LLM, image and Jev calls also log their formatted
+request and response bodies: indented JSON with credentials redacted,
+embedded base64 shortened to a length marker, and output capped at 4000
+characters. API keys and prompt content never appear at `info` or above.
 
 ### Advanced: custom pipeline
 
@@ -263,7 +415,10 @@ npm run build       # emit dist/
 
 Runnable examples live in [`examples/`](examples/) — `npx tsx examples/text.ts`,
 `examples/pdf.ts`, `examples/tags.ts`, `examples/flattened.ts`, `examples/language.ts`,
-`examples/html.ts`, `examples/anthropic.ts`, `examples/resilient.ts`.
+`examples/html.ts`, `examples/anthropic.ts`, `examples/resilient.ts`,
+`examples/analyze.ts`, `examples/sequential.ts`, `examples/generate-image.ts`,
+`examples/classify.ts`, `examples/auto.ts`, `examples/litellm.ts`, `examples/eval-categories.ts`
+(live API evaluation, not CI).
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
