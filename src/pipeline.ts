@@ -59,9 +59,7 @@ function defaultClassifier(llm: LlmProvider, options?: ProcessOptions): ContentC
     classify: async () => ({ ...GENERIC_CLASSIFICATION, reason }),
   });
   const raw =
-    options?.classifier?.mode ??
-    options?.classifier?.provider ??
-    process.env.SPECMINE_CLASSIFIER;
+    options?.classifier?.mode ?? options?.classifier?.provider ?? process.env.SPECMINE_CLASSIFIER;
   const mode: ClassifierMode = isClassifierMode(raw) ? raw : 'auto';
   if (mode === 'off') return fallback('disabled');
   if (mode === 'llm') return new LlmClassifier(llm);
@@ -192,6 +190,7 @@ export class DefaultPipeline {
           return visual.extract(text, profile, {
             ...callOptions,
             ...(options?.image?.model !== undefined ? { model: options.image.model } : {}),
+            minFacts: profile.minFacts,
           });
         },
         undefined,
@@ -199,7 +198,7 @@ export class DefaultPipeline {
 
     const runImageFromSpec = async (spec: SpecsResult, tags: TagsResult): Promise<GeneratedImage> =>
       this.runImage(profile, options, callOptions, undefined, () =>
-        pickVisualFacts(spec, tags, profile.subjectNoun),
+        pickVisualFacts(spec, tags, profile.subjectNoun, profile.keyMap),
       );
 
     let spec: SpecsResult | undefined;
@@ -223,8 +222,8 @@ export class DefaultPipeline {
       }
       if (spec !== undefined && tags !== undefined) {
         try {
-          const picked = pickVisualFacts(spec, tags, profile.subjectNoun);
-          image = hasEnoughFacts(picked)
+          const picked = pickVisualFacts(spec, tags, profile.subjectNoun, profile.keyMap);
+          image = hasEnoughFacts(picked, profile.minFacts)
             ? await runImageFromSpec(spec, tags)
             : await runImageDynamic();
         } catch (error) {
