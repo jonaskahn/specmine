@@ -1,0 +1,4 @@
+FlowBoard Project Management SaaS — Kanban + Gantt + automations + 200 templates.
+Plans: Free (10 users) / Pro $12/user/mo / Enterprise SSO + SLA. Integrates Slack, GitHub, Figma.
+SOC2 + GDPR, EU hosting option, 99.99% uptime, 40ms median API. 14-day trial, no card.
+★ 4.7 (3.9k reviews) · Onboarding concierge on annual

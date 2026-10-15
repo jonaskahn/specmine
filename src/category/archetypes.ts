@@ -97,6 +97,17 @@ export const ARCHETYPE_RECIPES: Record<ArchetypeRecipe['id'], ArchetypeRecipe> =
     forbidden: [],
     defaultSize: '1024x1024',
   },
+  place_scene: {
+    id: 'place_scene',
+    intentLine: 'Photorealistic photograph of a workplace or business setting, no people.',
+    composition: 'Wide interior or exterior shot, eye-level, calm and uncluttered.',
+    light: 'Natural daylight, soft and balanced.',
+    background: 'A tidy, modern, plausible setting for the described organization or role.',
+    realismLine: 'Real photograph, sharp focus, natural materials and believable scale.',
+    modifiers: ['generic setting, no identifying details'],
+    forbidden: ['people', 'faces', 'text', 'logos', 'signage text'],
+    defaultSize: '1536x1024',
+  },
   generic_subject: {
     id: 'generic_subject',
     intentLine: 'Neutral studio photograph of an item for a listing.',

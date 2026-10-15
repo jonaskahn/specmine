@@ -22,6 +22,8 @@ import { DefaultExtractor } from './extractor.js';
 import { JsonSpecValidator, type SpecValidator } from './spec/validator.js';
 import { guessDialect, PROMPT_DIALECTS, type PromptDialectId } from './image/dialects.js';
 import { hasEnoughFacts } from './image/facts.js';
+import { resolveGroundedFacts } from './image/ladder.js';
+import { ARCHETYPE_RECIPES } from './category/archetypes.js';
 import { pickVisualFacts } from './image/fact-picker.js';
 import { buildImagePrompt } from './image/prompt-builder.js';
 import { VisualExtractor } from './image/visual-extractor.js';
@@ -124,19 +126,22 @@ function profileOf(classification: Classification): ResolvedProfile {
   return resolveProfile(classification.domain);
 }
 
-function imageSkipped(
-  classification: Classification,
-  profile: ResolvedProfile,
-): string | undefined {
-  if (!classification.visual) return 'Content has no depictable subject';
+function imageSkipped(classification: Classification): string | undefined {
   if (classification.kind === 'non_content') return 'No content to depict';
-  if (classification.kind === 'item_collection' || classification.scope === 'multiple') {
-    return 'Collections describe multiple items; image skipped';
-  }
-  if (classification.kind === 'policy_legal') return 'Policy content is not depicted';
-  if (!profile.allowImage) return `Domain ${profile.domain} does not allow image generation`;
   return undefined;
 }
+
+const POLICY_PATTERN = /content[_ ]policy|safety system|moderation|responsible ai|rejected/i;
+const TRANSIENT_PATTERN = /responded (429|5\d\d)\b/;
+
+function classifyImageError(error: unknown): 'policy' | 'transient' | 'fatal' {
+  const message = error instanceof Error ? error.message : String(error);
+  if (POLICY_PATTERN.test(message)) return 'policy';
+  if (TRANSIENT_PATTERN.test(message)) return 'transient';
+  return 'fatal';
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class DefaultPipeline {
   constructor(private readonly dependencies: PipelineDependencies) {}
@@ -180,24 +185,20 @@ export class DefaultPipeline {
     const runSpec = async (): Promise<{ spec: SpecsResult; tags: TagsResult }> =>
       extractor.extractFromText(text, options, specMode, profile);
 
+    const dynamicFacts = async () => {
+      const visual = new VisualExtractor(this.dependencies.llm);
+      return visual.extract(text, profile, {
+        ...callOptions,
+        ...(options?.image?.model !== undefined ? { model: options.image.model } : {}),
+        minFacts: profile.minFacts,
+      });
+    };
+
     const runImageDynamic = async (): Promise<GeneratedImage> =>
-      this.runImage(
-        profile,
-        options,
-        callOptions,
-        async () => {
-          const visual = new VisualExtractor(this.dependencies.llm);
-          return visual.extract(text, profile, {
-            ...callOptions,
-            ...(options?.image?.model !== undefined ? { model: options.image.model } : {}),
-            minFacts: profile.minFacts,
-          });
-        },
-        undefined,
-      );
+      this.runImage(profile, options, callOptions, text, dynamicFacts);
 
     const runImageFromSpec = async (spec: SpecsResult, tags: TagsResult): Promise<GeneratedImage> =>
-      this.runImage(profile, options, callOptions, undefined, () =>
+      this.runImage(profile, options, callOptions, text, async () =>
         pickVisualFacts(spec, tags, profile.subjectNoun, profile.keyMap),
       );
 
@@ -207,7 +208,7 @@ export class DefaultPipeline {
     let specError: ExtractionError | undefined;
     let imageError: ExtractionError | undefined;
 
-    const skipReason = wantImage ? imageSkipped(classification, profile) : undefined;
+    const skipReason = wantImage ? imageSkipped(classification) : undefined;
     if (skipReason) {
       imageError = new ExtractionError('UNSUPPORTED_INPUT', skipReason);
     }
@@ -312,41 +313,76 @@ export class DefaultPipeline {
     profile: ResolvedProfile,
     options: ProcessOptions | undefined,
     callOptions: CallOptions,
-    dynamic: (() => Promise<import('./image/facts.js').VisualFacts | undefined>) | undefined,
-    fromSpec: (() => import('./image/facts.js').VisualFacts) | undefined,
+    text: string,
+    literal: () => Promise<import('./image/facts.js').VisualFacts | undefined>,
   ): Promise<GeneratedImage> {
-    const facts = fromSpec ? fromSpec() : await dynamic?.();
-    if (!facts) {
-      throw new ExtractionError('LLM_ERROR', 'Could not determine visual facts for image');
-    }
+    const grounded = await resolveGroundedFacts({
+      text,
+      profile,
+      llm: this.dependencies.llm,
+      literal,
+      ...(options?.image?.model !== undefined ? { model: options.image.model } : {}),
+      call: callOptions,
+    });
     const model = options?.image?.model;
     const dialectId = (options?.image?.dialect ?? '') as PromptDialectId;
     const dialect =
       dialectId && dialectId in PROMPT_DIALECTS ? PROMPT_DIALECTS[dialectId] : guessDialect(model);
-    const prompt = buildImagePrompt(facts, profile, dialect, {
-      ...(options?.image?.style !== undefined ? { style: options.image.style } : {}),
+    const style = options?.image?.style;
+    const build = (facts: import('./image/facts.js').VisualFacts, using: ResolvedProfile): string =>
+      buildImagePrompt(facts, using, dialect, { ...(style !== undefined ? { style } : {}) });
+    let prompt = build(grounded.facts, grounded.profile);
+    const neutral = {
+      subject: profile.subjectNoun,
+      colors: [],
+      materials: [],
+      heroFeatures: [],
+    };
+    const safePrompt = build(neutral, {
+      ...profile,
+      recipe: ARCHETYPE_RECIPES.generic_subject,
     });
-    const size = options?.image?.size ?? profile.defaultSize;
-    const generated = await this.dependencies.imageProvider.generate(
-      {
-        prompt,
-        ...(model !== undefined ? { model } : {}),
-        size,
-        ...(options?.image?.quality !== undefined ? { quality: options.image.quality } : {}),
-        ...(options?.image?.background !== undefined
-          ? { background: options.image.background }
-          : {}),
-      },
-      {
-        ...callOptions,
-        ...(options?.image?.timeoutMs !== undefined ? { timeoutMs: options.image.timeoutMs } : {}),
-      },
-    );
+    const size = options?.image?.size ?? grounded.profile.defaultSize;
+    const maxRetries = options?.image?.maxRetries ?? 2;
+    const backoff = options?.image?.retryBackoffMs ?? 500;
+    const deadline = Date.now() + (options?.image?.totalTimeoutMs ?? 240_000);
+    let attempt = 0;
+    let generated: Awaited<ReturnType<ImageProvider['generate']>>;
+    for (;;) {
+      try {
+        generated = await this.dependencies.imageProvider.generate(
+          {
+            prompt,
+            ...(model !== undefined ? { model } : {}),
+            size,
+            ...(options?.image?.quality !== undefined ? { quality: options.image.quality } : {}),
+            ...(options?.image?.background !== undefined
+              ? { background: options.image.background }
+              : {}),
+          },
+          {
+            ...callOptions,
+            ...(options?.image?.timeoutMs !== undefined
+              ? { timeoutMs: options.image.timeoutMs }
+              : {}),
+          },
+        );
+        break;
+      } catch (error) {
+        const kind = classifyImageError(error);
+        if (kind === 'fatal' || attempt >= maxRetries || Date.now() >= deadline) throw error;
+        attempt += 1;
+        logger().warn('Image generation retry', { attempt, kind });
+        if (kind === 'policy') prompt = safePrompt;
+        else await sleep(backoff * attempt);
+      }
+    }
     const blob = new Blob([generated.bytes as Uint8Array<ArrayBuffer>], {
       type: generated.mimeType,
     });
     const base64 = Buffer.from(generated.bytes).toString('base64');
     const result: GeneratedImage = {
+      grounding: grounded.grounding,
       blob,
       mimeType: generated.mimeType,
       base64,

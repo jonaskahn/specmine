@@ -17,6 +17,7 @@ export type ArchetypeId =
   | 'abstract_hero'
   | 'editorial_concept'
   | 'generic_subject'
+  | 'place_scene'
   | 'none';
 
 export type DomainId =

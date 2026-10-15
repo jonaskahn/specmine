@@ -72,8 +72,9 @@ test('registers a brand-new domain inheriting the general base', () => {
 
 test('regulated and abstract domains have expected archetypes', () => {
   assert.equal(resolveProfile('health_supplements').recipe.id, 'packshot');
-  assert.equal(resolveProfile('organization_person').allowImage, false);
-  assert.equal(resolveProfile('job_listing').recipe.id, 'none');
+  assert.equal(resolveProfile('organization_person').allowImage, true);
+  assert.equal(resolveProfile('organization_person').recipe.id, 'place_scene');
+  assert.equal(resolveProfile('job_listing').recipe.id, 'place_scene');
   assert.equal(resolveProfile('news_analysis').recipe.id, 'editorial_concept');
 });
 

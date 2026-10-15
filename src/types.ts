@@ -56,6 +56,12 @@ export interface ImageOutputOptions extends CallOptions {
   dialect?: string;
   /** include the internal render prompt in the result for debugging. Default: false */
   includePrompt?: boolean;
+  /** retries for transient provider errors and policy rejections. Default: 2 */
+  maxRetries?: number;
+  /** base backoff between retries in ms. Default: 500 */
+  retryBackoffMs?: number;
+  /** stop retrying after this many ms in total. Default: 240000 */
+  totalTimeoutMs?: number;
 }
 
 export interface ClassifierConfig extends CallOptions {
@@ -89,7 +95,11 @@ export interface CategoryInfo {
   reason?: string;
 }
 
+export type ImageGrounding = 'literal' | 'contextual' | 'conceptual' | 'neutral';
+
 export interface GeneratedImage {
+  /** how faithful the picture is: literal facts, stated context, a metaphor, or a neutral fallback */
+  grounding: ImageGrounding;
   blob: Blob;
   mimeType: string;
   /** raw base64 image bytes, no data-url prefix */

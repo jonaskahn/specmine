@@ -14,6 +14,16 @@ import {
 export const DEFAULT_JEV_API_HOST = 'https://api.typesafe.ai';
 export const DEFAULT_JEV_MODEL = 'jev-latest';
 export const JEV_STATE_LIMIT = 8000;
+// Docs: retry 429/529 with exponential backoff (the SDKs do this by default).
+export const JEV_MAX_ATTEMPTS = 3;
+export const JEV_RETRY_BACKOFF_MS = 500;
+
+export function isJevRetriable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /responded (429|529)\b/.test(message);
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface JevOptions extends ClassifierOptions {
   apiHost?: string;
@@ -92,6 +102,10 @@ export function buildJevQuestions(): Record<string, unknown> {
     visual: {
       type: 'noul',
       instructions: 'Does the content describe something that can be depicted in a picture?',
+      criteria: {
+        true: 'A specific thing, place, or scene is described and could be shown in a picture',
+        false: 'Abstract, legal, or empty content with nothing concrete to depict',
+      },
     },
   };
 }
@@ -135,30 +149,42 @@ export class JevClassifier implements ContentClassifier {
     logger().debug('Jev classification request', { model, chars: state.length });
     const payload = { model, state, questions: buildJevQuestions() };
     debugBody('Jev classification request body', payload);
-    const { body } = await requestJson(
-      `${apiHost}/v1/systemone`,
-      {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-        },
-        body: JSON.stringify(payload),
-      },
-      options,
-    );
-    debugBody('Jev classification response body', body);
-    const parsed = parseResponse(body);
-    if (!parsed) {
-      logger().warn('Jev response unparseable, using generic classification');
-      return { ...GENERIC_CLASSIFICATION };
+    // The docs ask callers to retry 429/529 with exponential backoff
+    // (the official SDKs do this automatically); raw HTTP must do it here.
+    let attempt = 0;
+    for (;;) {
+      try {
+        const { body } = await requestJson(
+          `${apiHost}/v1/systemone`,
+          {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+            },
+            body: JSON.stringify(payload),
+          },
+          options,
+        );
+        debugBody('Jev classification response body', body);
+        const parsed = parseResponse(body);
+        if (!parsed) {
+          logger().warn('Jev response unparseable, using generic classification');
+          return { ...GENERIC_CLASSIFICATION };
+        }
+        logger().info('Jev classification', {
+          kind: parsed.kind,
+          domain: parsed.domain,
+          confidence: parsed.confidence,
+        });
+        return parsed;
+      } catch (error) {
+        if (attempt >= JEV_MAX_ATTEMPTS - 1 || !isJevRetriable(error)) throw error;
+        attempt += 1;
+        logger().warn('Jev rate limited, retrying', { attempt });
+        await sleep(JEV_RETRY_BACKOFF_MS * 2 ** (attempt - 1));
+      }
     }
-    logger().info('Jev classification', {
-      kind: parsed.kind,
-      domain: parsed.domain,
-      confidence: parsed.confidence,
-    });
-    return parsed;
   }
 }
 

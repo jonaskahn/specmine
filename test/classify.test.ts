@@ -6,7 +6,12 @@ import {
   isKnownKind,
   isKnownScope,
 } from '../src/classify/classifier.js';
-import { buildJevQuestions, createJevClassifier, JevClassifier } from '../src/classify/jev.js';
+import {
+  buildJevQuestions,
+  createJevClassifier,
+  isJevRetriable,
+  JevClassifier,
+} from '../src/classify/jev.js';
 import { LlmClassifier } from '../src/classify/llm.js';
 import type { LlmProvider, LlmRequest, LlmResponse } from '../src/llm/provider.js';
 
@@ -216,4 +221,67 @@ test('llm classifier falls back on llm error, bad json and bad values', async ()
       source: 'llm',
     },
   );
+});
+
+test('jev retries 429 then succeeds', async () => {
+  const ok = {
+    answers: {
+      kind: { type: 'choice', choice: 'item_detail', confidence: 0.9 },
+      domain: { type: 'choice', choice: 'electronics', confidence: 0.8 },
+      scope: { type: 'choice', choice: 'single', confidence: 0.9 },
+      visual: { type: 'noul', noul: 0.9 },
+    },
+  };
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    if (calls === 1) return new Response('rate limited', { status: 429 });
+    return new Response(JSON.stringify(ok), { status: 200 });
+  }) as typeof fetch;
+  const result = await new JevClassifier({ apiKey: 'k' }).classify('text');
+  assert.equal(result.domain, 'electronics');
+  assert.equal(calls, 2);
+});
+
+test('jev gives up after max attempts and rethrows fatal errors', async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response('overloaded', { status: 529 });
+  }) as typeof fetch;
+  await assert.rejects(
+    new JevClassifier({ apiKey: 'k' }).classify('text'),
+    (error: unknown) => error instanceof Error && /responded 529/.test(error.message),
+  );
+  assert.equal(calls, 3);
+
+  calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response('bad gateway', { status: 502 });
+  }) as typeof fetch;
+  await assert.rejects(
+    new JevClassifier({ apiKey: 'k' }).classify('text'),
+    (error: unknown) => error instanceof Error && /responded 502/.test(error.message),
+  );
+  assert.equal(calls, 1);
+});
+
+test('isJevRetriable matches 429 and 529 only', () => {
+  assert.equal(isJevRetriable(new Error('LLM host responded 429: slow down')), true);
+  assert.equal(isJevRetriable(new Error('LLM host responded 529: overloaded')), true);
+  assert.equal(isJevRetriable(new Error('LLM host responded 503: nope')), false);
+  assert.equal(isJevRetriable(new Error('boom')), false);
+  assert.equal(isJevRetriable('responded 429'), true);
+  assert.equal(isJevRetriable(undefined), false);
+});
+
+test('jev rethrows non-error rejections without retry', async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    throw 'socket hung up';
+  }) as typeof fetch;
+  await assert.rejects(new JevClassifier({ apiKey: 'k' }).classify('text'), /socket hung up/);
+  assert.equal(calls, 1);
 });

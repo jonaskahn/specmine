@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { GENERIC_CLASSIFICATION, type Classification } from '../src/classify/classifier.js';
+import { neutralFacts } from '../src/image/ladder.js';
 import { DefaultExtractor } from '../src/extractor.js';
 import { ExtractionError } from '../src/errors.js';
 import type { ImageProvider } from '../src/llm/openai-image.js';
@@ -258,7 +259,11 @@ test('sequential mode records image errors without losing the spec', async () =>
   assert.equal(failed.image, undefined);
   assert.equal(failed.errors?.image?.code, 'LLM_ERROR');
 
-  const both = pipeline(['not json', 'still bad']);
+  const both = pipeline(
+    ['not json', 'still bad'],
+    productClassification(),
+    imageProvider({ fail: new ExtractionError('LLM_ERROR', 'blocked') }),
+  );
   await assert.rejects(
     both.pipeline.process('anything', { outputs: ['spec', 'image'], mode: 'sequential' }),
     (error: unknown) => error instanceof ExtractionError && error.code === 'INVALID_OUTPUT',
@@ -271,7 +276,11 @@ test('throws when every requested flow fails', async () => {
     pipe.process('anything', { outputs: ['spec'] }),
     (error: unknown) => error instanceof ExtractionError,
   );
-  const imageOnly = pipeline(['bad visual'], productClassification());
+  const imageOnly = pipeline(
+    ['bad visual'],
+    productClassification(),
+    imageProvider({ fail: new ExtractionError('LLM_ERROR', 'blocked') }),
+  );
   await assert.rejects(
     imageOnly.pipeline.process('anything', { outputs: ['image'] }),
     (error: unknown) => error instanceof ExtractionError && error.code === 'LLM_ERROR',
@@ -297,22 +306,132 @@ test('throws EMPTY_INPUT on empty text and non-content', async () => {
   );
 });
 
-test('skips image for collections, policy, hidden and non-visual content', async () => {
+test('collections, policy, hidden and entity content still render an image', async () => {
   for (const classification of [
     { ...productClassification(), kind: 'item_collection' },
     { ...productClassification(), scope: 'multiple' },
     { ...productClassification(), kind: 'policy_legal' },
     { ...productClassification(), kind: 'editorial', domain: 'news_analysis', visual: false },
     { ...productClassification(), domain: 'organization_person' },
+    { ...productClassification(), domain: 'job_listing' },
   ] as Classification[]) {
     const { pipeline: pipe } = pipeline([SPECS_JSON], classification);
     const result = await pipe.process('anything', { outputs: ['spec', 'image'] });
     assert.ok(result.spec);
-    assert.equal(result.image, undefined);
-    assert.equal(result.errors?.image?.code, 'UNSUPPORTED_INPUT');
+    assert.ok(result.image);
+    assert.equal(result.errors, undefined);
   }
 });
 
+test('grounding ladder: literal, contextual, conceptual and neutral', async () => {
+  const facts = (subject: string) =>
+    JSON.stringify({ subject, colors: [], materials: [], heroFeatures: [] });
+  const rich = JSON.stringify({
+    subject: 'kettle',
+    colors: ['black'],
+    materials: ['steel'],
+    heroFeatures: ['handle'],
+  });
+  const run = async (llm: string[], domain = 'electronics') => {
+    const { pipeline: pipe } = pipeline(llm, {
+      ...productClassification(),
+      domain,
+    } as Classification);
+    return pipe.process('anything', { outputs: ['image'], image: { includePrompt: true } });
+  };
+  assert.equal((await run([rich])).image?.grounding, 'literal');
+  assert.equal((await run(['bad', facts('townhouse')])).image?.grounding, 'contextual');
+  const concept = await run(['bad', facts('lantern')], 'news_analysis');
+  assert.equal(concept.image?.grounding, 'conceptual');
+  const goods = await run(['bad', 'bad', facts('lantern')]);
+  assert.equal(goods.image?.grounding, 'conceptual');
+  const abstract = await run(['bad', facts('shapes')], 'software_app');
+  assert.equal(abstract.image?.grounding, 'conceptual');
+  const entity = await run(['bad', facts('office')], 'job_listing');
+  assert.equal(entity.image?.grounding, 'contextual');
+  assert.ok(entity.image?.prompt?.toLowerCase().includes('office'));
+  const failing = await run(['bad', 'bad', 'bad']);
+  assert.equal(failing.image?.grounding, 'neutral');
+});
+
+test('neutral fallback builds a safe subject from the first line', () => {
+  assert.equal(
+    neutralFacts('# Acme **Kettle** 1500W\nmore', 'thing').subject.includes('Acme'),
+    true,
+  );
+  assert.equal(neutralFacts('', 'thing').subject, 'thing');
+  assert.equal(neutralFacts('12 34', 'thing').subject, 'thing');
+});
+
+test('image retries transient and policy errors, then gives up on fatal ones', async () => {
+  const prompts: string[] = [];
+  let calls = 0;
+  const flaky = (errors: Error[]): ImageProvider => ({
+    async generate(request) {
+      prompts.push(request.prompt);
+      const next = errors[calls];
+      calls += 1;
+      if (next) throw next;
+      return { bytes: new Uint8Array([1]), mimeType: 'image/png' };
+    },
+  });
+  const opts = {
+    outputs: ['image'],
+    image: { retryBackoffMs: 1, includePrompt: true },
+  } as ProcessOptions;
+  const rich = JSON.stringify({
+    subject: 'kettle',
+    colors: ['black'],
+    materials: ['steel'],
+    heroFeatures: ['handle'],
+  });
+
+  const transient = pipeline(
+    [rich],
+    productClassification(),
+    flaky([new ExtractionError('LLM_ERROR', 'LLM host responded 504: gateway')]),
+  );
+  assert.ok((await transient.pipeline.process('x', opts)).image);
+  assert.equal(calls, 2);
+
+  calls = 0;
+  prompts.length = 0;
+  const policy = pipeline(
+    [rich],
+    productClassification(),
+    flaky([new ExtractionError('LLM_ERROR', 'LLM host responded 400: content_policy_violation')]),
+  );
+  assert.ok((await policy.pipeline.process('x', opts)).image);
+  assert.notEqual(prompts[0], prompts[1]);
+  assert.ok(!prompts[1]!.includes('kettle') || prompts[1]!.length < prompts[0]!.length + 200);
+
+  calls = 0;
+  const exhausted = pipeline(
+    [rich],
+    productClassification(),
+    flaky([
+      new ExtractionError('LLM_ERROR', 'LLM host responded 503'),
+      new ExtractionError('LLM_ERROR', 'LLM host responded 503'),
+      new ExtractionError('LLM_ERROR', 'LLM host responded 503'),
+    ]),
+  );
+  await assert.rejects(exhausted.pipeline.process('x', opts));
+  assert.equal(calls, 3);
+
+  calls = 0;
+  const deadline = pipeline(
+    [rich],
+    productClassification(),
+    flaky([new ExtractionError('LLM_ERROR', 'LLM host responded 503')]),
+  );
+  await assert.rejects(deadline.pipeline.process('x', { ...opts, image: { totalTimeoutMs: -1 } }));
+  assert.equal(calls, 1);
+
+  calls = 0;
+  const fatal = pipeline([rich], productClassification(), flaky([new Error('weird')]));
+  await assert.rejects(fatal.pipeline.process('x', opts));
+  assert.equal(calls, 1);
+});
 test('tags are included only when requested', async () => {
   const withTags = pipeline(['{"Color": "black", "tags": ["kettle"]}']);
   const result = await withTags.pipeline.process('anything', { tags: true });
@@ -494,7 +613,7 @@ test('top-level generateImage returns the blob and throws when skipped', async (
     assert.ok(image.dataUrl.startsWith('data:image/png;base64,'));
     assert.equal(image.prompt, undefined);
     await assert.rejects(
-      generateImage('Acme Corp company profile and history.', { category: 'organization_person' }),
+      generateImage('Acme kettle.', { category: 'electronics', kind: 'non_content' }),
       (error: unknown) => error instanceof ExtractionError && error.code === 'UNSUPPORTED_INPUT',
     );
   } finally {
@@ -691,4 +810,26 @@ test('resolves image options and text providers', () => {
   });
   assert.equal(typeof providerFrom(undefined).complete, 'function');
   assert.equal(typeof providerFrom({ provider: 'anthropic', apiKey: 'k' }).complete, 'function');
+});
+
+test('ladder briefs reuse the configured image model', async () => {
+  const models: Array<string | undefined> = [];
+  const llm: LlmProvider = {
+    async complete(request): Promise<LlmResponse> {
+      models.push(request.model);
+      return {
+        content: JSON.stringify({ subject: 'house', colors: [], materials: [], heroFeatures: [] }),
+      };
+    },
+  };
+  const built = new DefaultPipeline({
+    reader: reader(TEXT),
+    llm,
+    validator: new JsonSpecValidator(),
+    classifier: classifier(productClassification()),
+    imageProvider: imageProvider(),
+  });
+  const result = await built.process('x', { outputs: ['image'], image: { model: 'img-model' } });
+  assert.equal(result.image?.grounding, 'contextual');
+  assert.ok(models.every((model) => model === 'img-model'));
 });

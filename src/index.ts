@@ -6,6 +6,7 @@ export type {
   ExtractOptions,
   ExtractionErrorCode,
   GeneratedImage,
+  ImageGrounding,
   ImageOutputOptions,
   NestedSpecs,
   OutputKind,
