@@ -290,7 +290,9 @@ npm run build       # emit dist/
 
 Runnable examples live in [`examples/`](examples/) — `npx tsx examples/text.ts`,
 `examples/pdf.ts`, `examples/tags.ts`, `examples/flattened.ts`, `examples/language.ts`,
-`examples/html.ts`, `examples/anthropic.ts`, `examples/resilient.ts`.
+`examples/html.ts`, `examples/anthropic.ts`, `examples/resilient.ts`,
+`examples/analyze.ts`, `examples/sequential.ts`, `examples/generate-image.ts`,
+`examples/classify.ts`, `examples/litellm.ts`.
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License

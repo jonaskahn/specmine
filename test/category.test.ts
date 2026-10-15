@@ -8,6 +8,7 @@ import {
   resetCategoryOverrides,
   resolveProfile,
 } from '../src/category/registry.js';
+import type { DomainId } from '../src/category/types.js';
 
 test.afterEach(() => {
   resetCategoryOverrides();
@@ -47,6 +48,26 @@ test('override keeps domain and family unless patched', () => {
   const profile = getDomainProfile('electronics');
   assert.equal(profile.domain, 'electronics');
   assert.equal(profile.family, 'digital');
+});
+
+test('registers a brand-new domain inheriting the general base', () => {
+  registerCategory('wine' as DomainId, {
+    family: 'goods',
+    subjectNoun: 'bottle',
+    specHints: ['vintage'],
+    archetype: 'food_shot',
+    defaultStyle: 'elegant bottle photo',
+    defaultSize: '1024x1024',
+    allowImage: true,
+  });
+  assert.ok(listDomains().includes('wine' as DomainId));
+  const profile = resolveProfile('wine' as DomainId);
+  assert.equal(profile.domain, 'wine');
+  assert.equal(profile.family, 'goods');
+  assert.equal(profile.subjectNoun, 'bottle');
+  assert.equal(profile.recipe.id, 'food_shot');
+  resetCategoryOverrides();
+  assert.ok(!listDomains().includes('wine' as DomainId));
 });
 
 test('regulated and abstract domains have expected archetypes', () => {

@@ -292,25 +292,23 @@ const BUILTINS: Record<DomainId, DomainProfile> = Object.fromEntries(
   SEEDS.map((seed) => [seed.domain, seedToProfile(seed)]),
 ) as Record<DomainId, DomainProfile>;
 
-const overrides = new Map<DomainId, Partial<DomainProfile>>();
+const customs = new Map<DomainId, DomainProfile>();
 
 export function registerCategory(domain: DomainId, patch: Partial<DomainProfile>): void {
-  overrides.set(domain, { ...(overrides.get(domain) ?? {}), ...patch });
+  const base = customs.get(domain) ?? BUILTINS[domain] ?? BUILTINS.general;
+  customs.set(domain, { ...base, ...patch, domain, family: patch.family ?? base.family });
 }
 
 export function resetCategoryOverrides(): void {
-  overrides.clear();
+  customs.clear();
 }
 
 export function getDomainProfile(domain: DomainId): DomainProfile {
-  const base = BUILTINS[domain] ?? BUILTINS.general;
-  const patch = overrides.get(domain);
-  if (!patch) return base;
-  return { ...base, ...patch, domain: base.domain, family: patch.family ?? base.family };
+  return customs.get(domain) ?? BUILTINS[domain] ?? BUILTINS.general;
 }
 
 export function listDomains(): DomainId[] {
-  return Object.keys(BUILTINS) as DomainId[];
+  return [...Object.keys(BUILTINS), ...customs.keys()] as DomainId[];
 }
 
 export function resolveProfile(domain: DomainId): ResolvedProfile {
