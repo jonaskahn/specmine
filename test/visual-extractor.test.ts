@@ -41,6 +41,7 @@ test('builds category visual prompts with exclusions', () => {
   const { system, slots } = buildVisualPrompts(resolveProfile('apparel_footwear'));
   assert.ok(slots.includes('colors'));
   assert.ok(system.includes('Never depict or include: size, fit tables'));
+  assert.ok(system.includes('Current date:'));
   const general = buildVisualPrompts(resolveProfile('general'));
   assert.ok(!general.system.includes('Never depict'));
   const bare = buildVisualPrompts({ ...resolveProfile('general'), visualSlots: [] });
@@ -95,4 +96,24 @@ test('contextual briefs keep the brand as a design cue', async () => {
   });
   assert.equal(result.grounding, 'contextual');
   assert.equal(result.facts.brand, 'Acme');
+});
+
+test('ladder briefs stamp the current date on the system prompt', async () => {
+  const seen: string[] = [];
+  const llm: LlmProvider = {
+    async complete(request): Promise<LlmResponse> {
+      const first = request.messages[0];
+      seen.push(typeof first?.content === 'string' ? first.content : '');
+      return { content: JSON.stringify({ subject: 'office', colors: [], materials: [] }) };
+    },
+  };
+  const result = await resolveGroundedFacts({
+    text: 'Acme office',
+    profile: resolveProfile('electronics'),
+    llm,
+    literal: async () => undefined,
+    call: {},
+  });
+  assert.equal(result.grounding, 'contextual');
+  assert.ok(seen[0]?.includes('Current date:'));
 });

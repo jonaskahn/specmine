@@ -1,4 +1,5 @@
 import type { ResolvedProfile } from '../category/types.js';
+import { currentDateLine } from '../time.js';
 
 export type PromptMode = 'specs' | 'specs-and-tags' | 'tags-only';
 
@@ -166,10 +167,11 @@ export function buildSystemPrompt(
   mode: PromptMode,
   profile?: ResolvedProfile,
 ): string {
+  const dateLine = currentDateLine();
   if (!profile) {
     const prompt = SYSTEM_PROMPTS[mode];
-    if (lang === 'en') return prompt;
-    return `${prompt}\n\n${LANGUAGE_LINES[mode](lang)}`;
+    if (lang === 'en') return `${prompt}\n\n${dateLine}`;
+    return `${prompt}\n\n${LANGUAGE_LINES[mode](lang)}\n\n${dateLine}`;
   }
   const hints = hintsBlock(profile);
   const parts =
@@ -214,6 +216,6 @@ export function buildSystemPrompt(
             'Output discipline:\n- Respond with a single JSON object and nothing else, using this exact shape:\n  {"tags": ["tag1", "tag2"]}',
           ];
   const prompt = parts.join('\n\n');
-  if (lang === 'en') return prompt;
-  return `${prompt}\n\n${LANGUAGE_LINES[mode](lang)}`;
+  if (lang === 'en') return `${prompt}\n\n${dateLine}`;
+  return `${prompt}\n\n${LANGUAGE_LINES[mode](lang)}\n\n${dateLine}`;
 }

@@ -191,6 +191,7 @@ test('llm classifier parses classification JSON', async () => {
   assert.equal(result.visual, false);
   assert.equal(result.source, 'llm');
   assert.equal(seen[0]?.model, 'm');
+  assert.ok(String(seen[0]?.messages[0]?.content).includes('Current date:'));
 });
 
 test('llm classifier falls back on llm error, bad json and bad values', async () => {

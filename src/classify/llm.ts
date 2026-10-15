@@ -2,6 +2,7 @@ import { familyOf, listDomains } from '../category/registry.js';
 import type { DomainId } from '../category/types.js';
 import type { LlmProvider } from '../llm/provider.js';
 import { logger } from '../log.js';
+import { currentDateLine } from '../time.js';
 import {
   GENERIC_CLASSIFICATION,
   isKnownKind,
@@ -39,7 +40,7 @@ export class LlmClassifier implements ContentClassifier {
       const response = await this.llm.complete(
         {
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: `${SYSTEM_PROMPT}\n\n${currentDateLine()}` },
             { role: 'user', content: userPrompt(text, listDomains()) },
           ],
           schema: CLASSIFY_SCHEMA,

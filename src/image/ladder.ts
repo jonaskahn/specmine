@@ -2,6 +2,7 @@ import { ARCHETYPE_RECIPES } from '../category/archetypes.js';
 import type { ResolvedProfile } from '../category/types.js';
 import type { LlmProvider } from '../llm/provider.js';
 import { logger } from '../log.js';
+import { currentDateLine } from '../time.js';
 import type { CallOptions, ImageGrounding } from '../types.js';
 import { parseVisualFacts, VISUAL_FACTS_SCHEMA, type VisualFacts } from './facts.js';
 import { sanitizeFactsText, stripMarketing } from './hygiene.js';
@@ -49,7 +50,7 @@ async function briefFacts(
     const response = await input.llm.complete(
       {
         messages: [
-          { role: 'system', content: system },
+          { role: 'system', content: `${system}\n\n${currentDateLine()}` },
           {
             role: 'user',
             content: `Domain: ${input.profile.domain}.\n\nContent:\n${input.text.slice(0, 4000)}`,

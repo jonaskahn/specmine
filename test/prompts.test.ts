@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { resolveProfile } from '../src/category/registry.js';
 import type { ResolvedProfile } from '../src/category/types.js';
 import { buildSystemPrompt, taskLine } from '../src/prompts/spec.js';
+import { currentDateLine } from '../src/time.js';
 
 function emptyHintsProfile(): ResolvedProfile {
   const base = resolveProfile('general');
@@ -40,6 +41,15 @@ test('language line is appended for non-english with and without profile', () =>
     buildSystemPrompt('de', 'specs-and-tags', resolveProfile('electronics')).includes('German'),
   );
   assert.ok(buildSystemPrompt('de', 'tags-only').includes('German'));
+});
+
+test('every system prompt carries the current date', () => {
+  assert.match(currentDateLine(), /^Current date: \d{4}-\d{2}-\d{2} \(UTC\)\.$/);
+  const today = new Date().toISOString().slice(0, 10);
+  for (const mode of ['specs', 'specs-and-tags', 'tags-only'] as const) {
+    assert.ok(buildSystemPrompt('en', mode).includes(today));
+    assert.ok(buildSystemPrompt('de', mode, resolveProfile('electronics')).includes(today));
+  }
 });
 
 test('profile always carries a category block with ignore list', () => {

@@ -1,6 +1,7 @@
 import type { ResolvedProfile } from '../category/types.js';
 import type { LlmProvider } from '../llm/provider.js';
 import { logger } from '../log.js';
+import { currentDateLine } from '../time.js';
 import type { CallOptions } from '../types.js';
 import {
   hasEnoughFacts,
@@ -23,6 +24,7 @@ export function buildVisualPrompts(profile: ResolvedProfile): { system: string; 
   if (profile.notDepictable.length > 0) {
     lines.push(`Never depict or include: ${profile.notDepictable.join(', ')}.`);
   }
+  lines.push(currentDateLine());
   return { system: lines.join('\n'), slots: slots.join(', ') };
 }
 
