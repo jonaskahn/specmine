@@ -7,6 +7,7 @@ import {
   resolveProfile,
 } from '../src/category/registry.js';
 import { guessDialect, PROMPT_DIALECTS } from '../src/image/dialects.js';
+import type { SpecsResult } from '../src/types.js';
 import {
   countFilledSlots,
   hasEnoughFacts,
@@ -20,6 +21,8 @@ test.afterEach(() => {
 });
 import {
   containsForbiddenNumbers,
+  isMeasureOnly,
+  sanitizeBrandName,
   sanitizeFactsText,
   sanitizePrompt,
   stripMarketing,
@@ -40,6 +43,7 @@ test('visual facts schema lists every property as required', () => {
       'heroFeatures',
       'viewpoint',
       'setting',
+      'brand',
     ],
   );
 });
@@ -105,7 +109,28 @@ test('picks visual facts from nested multilingual specs', () => {
   assert.deepEqual(facts.materials, ['Edelstahl', 'Glas']);
   assert.equal(facts.shape, 'rund');
   assert.equal(facts.finish, 'matt');
-  assert.equal(facts.subject, 'Acme');
+  // The manufacturer is kept as a design-language cue, not the subject.
+  assert.equal(facts.subject, 'kettle');
+  assert.equal(facts.brand, 'Acme');
+});
+
+test('picks brand across major languages, never as a feature', () => {
+  const { keyMap } = resolveProfile('electronics');
+  const cases: Array<[SpecsResult, string]> = [
+    [{ 'ブランド': 'Acme' }, 'Acme'],
+    [{ Details: { Merek: 'Acme' } }, 'Acme'],
+    [{ Hersteller: 'Acme', Product: 'kettle' }, 'Acme'],
+    [{ 'nhà sản xuất': 'Acme' }, 'Acme'],
+    [{ 'الشركة المصنعة': 'Acme' }, 'Acme'],
+    [{ '制造商': 'Acme' }, 'Acme'],
+  ];
+  for (const [spec, brand] of cases) {
+    const facts = pickVisualFacts(spec, ['kettle'], 'product', keyMap);
+    assert.equal(facts.brand, brand);
+    assert.ok(!facts.heroFeatures.includes('Acme'));
+  }
+  const named = pickVisualFacts({ Hersteller: 'Acme', Product: 'kettle' }, [], 'product', keyMap);
+  assert.equal(named.subject, 'kettle');
 });
 
 test('picks subject from tags when no name key exists', () => {
@@ -311,4 +336,81 @@ test('works without a keyMap and drops overlong values', () => {
   assert.deepEqual(facts.colors, []);
   const long = pickVisualFacts({ Note: 'x'.repeat(81) }, [], 'product', {});
   assert.deepEqual(long.heroFeatures, []);
+});
+
+test('sanitizes brand names to short design-language tokens', () => {
+  assert.equal(sanitizeBrandName('Acme'), 'Acme');
+  assert.equal(sanitizeBrandName('  "Acme"\n premium '), 'Acme');
+  assert.equal(sanitizeBrandName(42), undefined);
+  assert.equal(sanitizeBrandName('$49.99'), undefined);
+  assert.equal(sanitizeBrandName('x'.repeat(41)), undefined);
+  assert.equal(sanitizeBrandName('2000'), undefined);
+  assert.equal(isMeasureOnly('1.5 kg'), true);
+  assert.equal(isMeasureOnly('matte black'), false);
+});
+
+test('parses brand from visual facts and drops unusable values', () => {
+  assert.equal(parseVisualFacts({ subject: 'kettle', brand: 'Acme' })?.brand, 'Acme');
+  assert.equal(parseVisualFacts({ subject: 'kettle', brand: '' })?.brand, undefined);
+  assert.equal(parseVisualFacts({ subject: 'kettle', brand: '$9' })?.brand, undefined);
+  assert.equal(parseVisualFacts({ subject: 'kettle' })?.brand, undefined);
+});
+
+test('renders brand as a design cue, never as drawn text', () => {
+  const profile = resolveProfile('electronics');
+  const facts = {
+    subject: 'electric kettle',
+    colors: ['matte black'],
+    materials: ['stainless steel'],
+    heroFeatures: ['carry handle'],
+    brand: 'Acme',
+  };
+  const labeled = buildImagePrompt(facts, profile, PROMPT_DIALECTS['gpt-image']);
+  assert.ok(labeled.includes('Subject: Acme-style electric kettle.'));
+  const paragraph = buildImagePrompt(facts, profile, PROMPT_DIALECTS.generic);
+  assert.ok(paragraph.includes('Acme-style electric kettle'));
+  for (const prompt of [labeled, paragraph]) {
+    assert.ok(!prompt.includes('Acme"'));
+    assert.ok(!/Acme(?!-style)/.test(prompt.replace('Acme-style', '')));
+  }
+});
+
+test('keeps guardrails when the prompt overflows its word budget', () => {
+  const profile = resolveProfile('electronics');
+  const tight = { ...PROMPT_DIALECTS.generic, maxWords: 60 };
+  const prompt = buildImagePrompt(
+    {
+      subject: 'electric kettle',
+      colors: ['matte black'],
+      materials: ['stainless steel'],
+      heroFeatures: ['carry handle on top', 'water window'],
+      shape: 'cylindrical',
+      finish: 'matte',
+    },
+    profile,
+    tight,
+  );
+  assert.ok(prompt.split(/\s+/).length <= 60);
+  assert.ok(prompt.includes('electric kettle'));
+  assert.ok(prompt.includes('unbranded'));
+  assert.ok(
+    !prompt.includes('Real photograph') ||
+      prompt.indexOf('unbranded') < prompt.indexOf('Real photograph'),
+  );
+});
+
+test('maps brand-text exclusions to a blank-label guardrail', () => {
+  const profile = resolveProfile('food_beverage');
+  const prompt = buildImagePrompt(
+    { subject: 'coffee bag', colors: [], materials: [], heroFeatures: [] },
+    profile,
+    PROMPT_DIALECTS.generic,
+  );
+  assert.ok(prompt.includes('blank unmarked label'));
+});
+
+test('dialect word budgets stay in the concise band', () => {
+  for (const dialect of Object.values(PROMPT_DIALECTS)) {
+    assert.ok(dialect.maxWords <= 140, `${dialect.id} over budget`);
+  }
 });

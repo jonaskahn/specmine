@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveProfile } from '../src/category/registry.js';
 import type { LlmProvider, LlmResponse } from '../src/llm/provider.js';
+import { resolveGroundedFacts } from '../src/image/ladder.js';
 import { buildVisualPrompts, VisualExtractor } from '../src/image/visual-extractor.js';
 
 function fakeLlm(content: string | Error): LlmProvider {
@@ -54,4 +55,44 @@ test('refuses thin facts below the minimum', async () => {
     undefined,
   );
   assert.ok(await new VisualExtractor(fakeLlm(thin)).extract('text', profile));
+});
+
+test('conceptual briefs stay unbranded even when the llm names a brand', async () => {
+  const profile = resolveProfile('software_app');
+  const brief = JSON.stringify({
+    subject: 'ascending glass prisms',
+    colors: ['blue'],
+    materials: [],
+    heroFeatures: [],
+    brand: 'Acme',
+  });
+  const result = await resolveGroundedFacts({
+    text: 'Acme course platform',
+    profile,
+    llm: fakeLlm(brief),
+    literal: async () => undefined,
+    call: {},
+  });
+  assert.equal(result.grounding, 'conceptual');
+  assert.equal(result.facts.brand, undefined);
+});
+
+test('contextual briefs keep the brand as a design cue', async () => {
+  const profile = resolveProfile('electronics');
+  const brief = JSON.stringify({
+    subject: 'electric kettle',
+    colors: ['black'],
+    materials: [],
+    heroFeatures: [],
+    brand: 'Acme',
+  });
+  const result = await resolveGroundedFacts({
+    text: 'Acme electric kettle',
+    profile,
+    llm: fakeLlm(brief),
+    literal: async () => undefined,
+    call: {},
+  });
+  assert.equal(result.grounding, 'contextual');
+  assert.equal(result.facts.brand, 'Acme');
 });

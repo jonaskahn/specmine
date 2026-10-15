@@ -7,10 +7,10 @@ import { parseVisualFacts, VISUAL_FACTS_SCHEMA, type VisualFacts } from './facts
 import { sanitizeFactsText, stripMarketing } from './hygiene.js';
 
 const SHAPE_LINE =
-  'Respond with a single JSON object and nothing else: {"subject": "...", "shape": "...", "proportions": "...", "colors": ["..."], "materials": ["..."], "finish": "...", "heroFeatures": ["..."], "viewpoint": "...", "setting": "..."}. Use "" or [] for anything unknown.';
+  'Respond with a single JSON object and nothing else: {"subject": "...", "shape": "...", "proportions": "...", "colors": ["..."], "materials": ["..."], "finish": "...", "heroFeatures": ["..."], "viewpoint": "...", "setting": "...", "brand": "<manufacturer/brand name if stated, else "">"}. Use "" or [] for anything unknown. A stated brand goes ONLY in "brand" — never inside subject, heroFeatures, or other descriptive text.';
 
 const COMMON_RULES =
-  'Never include people, faces, brand names, logos, readable text, prices, phone numbers, URLs or numbers. Your output feeds an image-generation prompt and is never read by a person.';
+  'Never include people, faces, logos, readable text, prices, phone numbers, URLs or numbers in descriptive fields. Your output feeds an image-generation prompt and is never read by a person.';
 
 const CONTEXTUAL_SYSTEM = `You are a visual-brief engine. From the content, describe the real place, scene or object it is about as a photographer would shoot it.
 Use only what the content states, or the obvious generic type of the subject (for example "townhouse exterior with a rooftop terrace"). Fill "subject" with a concrete noun phrase and "setting" with the surroundings. ${COMMON_RULES}
@@ -97,6 +97,8 @@ export async function resolveGroundedFacts(input: LadderInput): Promise<LadderRe
   }
   const conceptual = await briefFacts(CONCEPTUAL_SYSTEM, input, 'Conceptual');
   if (conceptual) {
+    // Abstract metaphors stay unbranded: no design-language cue applies.
+    delete conceptual.brand;
     return {
       facts: conceptual,
       grounding: 'conceptual',

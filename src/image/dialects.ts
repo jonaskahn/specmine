@@ -9,39 +9,43 @@ export interface PromptDialect {
 }
 
 export const PROMPT_DIALECTS: Record<PromptDialectId, PromptDialect> = {
+  // Budgets target the 80–120 word band: dense enough for spec-grounded
+  // subjects, short enough that attribute binding survives. Guardrails ride
+  // ahead of the truncation tail (see prompt-builder), so overflow trims
+  // photo-craft boilerplate first, never the subject or constraints.
   'gpt-image': {
     id: 'gpt-image',
     format: 'labeled',
     constraintStyle: 'explicit-exclusions',
-    maxWords: 180,
+    maxWords: 120,
     supportsNegativePrompt: false,
   },
   dalle3: {
     id: 'dalle3',
     format: 'paragraph',
     constraintStyle: 'positive-only',
-    maxWords: 150,
+    maxWords: 100,
     supportsNegativePrompt: false,
   },
   flux: {
     id: 'flux',
     format: 'paragraph',
     constraintStyle: 'positive-only',
-    maxWords: 220,
+    maxWords: 140,
     supportsNegativePrompt: false,
   },
   sd: {
     id: 'sd',
     format: 'paragraph',
     constraintStyle: 'positive-only',
-    maxWords: 150,
+    maxWords: 100,
     supportsNegativePrompt: true,
   },
   generic: {
     id: 'generic',
     format: 'paragraph',
     constraintStyle: 'positive-only',
-    maxWords: 150,
+    maxWords: 100,
     supportsNegativePrompt: false,
   },
 };

@@ -8,6 +8,11 @@ export interface VisualFacts {
   heroFeatures: string[];
   viewpoint?: string;
   setting?: string;
+  /**
+   * Stated manufacturer/brand name. Rendered only as a "<brand>-style design
+   * language" cue — never as a request to draw the name, logo or label text.
+   */
+  brand?: string;
 }
 
 export interface VisualFactsInput {
@@ -20,6 +25,7 @@ export interface VisualFactsInput {
   heroFeatures?: unknown;
   viewpoint?: unknown;
   setting?: unknown;
+  brand?: unknown;
 }
 
 function asString(value: unknown): string | undefined {
@@ -48,6 +54,7 @@ export const VISUAL_FACTS_SCHEMA = {
     heroFeatures: { type: 'array', items: { type: 'string' } },
     viewpoint: { type: 'string' },
     setting: { type: 'string' },
+    brand: { type: 'string' },
   },
   // Strict structured-output backends (e.g. Azure via LiteLLM) require every
   // property to be listed here. Unknown optionals use "" or [] — the parser
@@ -62,9 +69,12 @@ export const VISUAL_FACTS_SCHEMA = {
     'heroFeatures',
     'viewpoint',
     'setting',
+    'brand',
   ],
   additionalProperties: false,
 } as const;
+
+import { sanitizeBrandName } from './hygiene.js';
 
 export function parseVisualFacts(input: unknown): VisualFacts | undefined {
   if (typeof input !== 'object' || input === null) return undefined;
@@ -87,6 +97,8 @@ export function parseVisualFacts(input: unknown): VisualFacts | undefined {
   if (viewpoint) facts.viewpoint = viewpoint;
   const setting = asString(raw.setting);
   if (setting) facts.setting = setting;
+  const brand = sanitizeBrandName(raw.brand);
+  if (brand !== undefined) facts.brand = brand;
   return facts;
 }
 

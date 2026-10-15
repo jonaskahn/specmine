@@ -46,6 +46,28 @@ export function stripMarketing(value: string): string {
     .trim();
 }
 
+const MEASURE_ONLY = /^\d[\d\s.,/-]*[a-zA-Z%°]*$/;
+
+export function isMeasureOnly(value: string): boolean {
+  return MEASURE_ONLY.test(value.trim());
+}
+
+/**
+ * Reduces a raw brand/manufacturer value to a short design-language token.
+ * Returns undefined when nothing usable remains (non-string, empty after
+ * cleaning, overlong, or a bare measurement). The result is safe to embed
+ * as a "<brand>-style" cue — it never carries prices, SKUs, URLs or specs.
+ */
+export function sanitizeBrandName(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const out = stripMeasurements(stripMarketing(sanitizeFactsText(value)), false)
+    .replace(/["'\n\r]/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  if (!out || out.length > 40 || isMeasureOnly(out)) return undefined;
+  return out;
+}
+
 export function sanitizePrompt(prompt: string, maxWords: number): string {
   let out = sanitizeFactsText(stripMarketing(prompt));
   const words = out.split(/\s+/).filter((word) => word.length > 0);

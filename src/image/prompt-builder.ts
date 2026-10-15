@@ -27,6 +27,17 @@ function featuresLine(facts: VisualFacts): string {
   return `Key visible features: ${facts.heroFeatures.join('; ')}.`;
 }
 
+/**
+ * Design-language cue for a known brand, e.g. "Acme-style ". Kept adjacent
+ * to the subject (early token weight) and phrased as a style — never as an
+ * instruction to render the name, logo or label text, which models garble
+ * and filters may block. The blank-label guardrail in the constraints block
+ * always pairs with this cue.
+ */
+function brandCue(facts: VisualFacts): string {
+  return facts.brand !== undefined ? `${facts.brand}-style ` : '';
+}
+
 function constraintsBlock(recipe: ResolvedProfile['recipe'], dialect: PromptDialect): string {
   const forbidden = recipe.forbidden;
   if (forbidden.length === 0) return '';
@@ -42,6 +53,7 @@ function constraintsBlock(recipe: ResolvedProfile['recipe'], dialect: PromptDial
     'extra products': 'single item only',
     faces: 'with no faces visible',
     'brand labels': 'with plain unmarked surfaces',
+    'brand text': 'with a blank unmarked label and no readable text',
     clutter: 'kept minimal and uncluttered',
     'competing objects': 'single subject only',
     'fake UI': 'abstract shapes only, not a screen mockup',
@@ -64,31 +76,35 @@ export function buildImagePrompt(
   const style = options?.style ?? profile.defaultStyle;
   const appearance = appearanceLine(facts);
   const features = featuresLine(facts);
+  const cue = brandCue(facts);
   const viewpoint = facts.viewpoint ?? recipe.composition;
   const setting = facts.setting ?? recipe.background;
   const constraints = constraintsBlock(recipe, dialect);
+  // Constraints ride ahead of the realism tail: sanitizePrompt truncates
+  // overflow from the end, and the no-text/no-logo guardrails must never be
+  // the first thing dropped.
   if (dialect.format === 'labeled') {
     const sections = [
       `Intent: ${recipe.intentLine}${style ? ` Style: ${style}.` : ''}`,
-      `Subject: ${facts.subject}.`,
+      `Subject: ${cue}${facts.subject}.`,
       ...(appearance ? [`Appearance: ${appearance}.`] : []),
       ...(features ? [features] : []),
+      ...(constraints ? [constraints] : []),
       `Composition: ${viewpoint}.`,
       `Light: ${recipe.light}`,
       `Background: ${setting}.`,
       recipe.realismLine,
       ...recipe.modifiers,
-      ...(constraints ? [constraints] : []),
     ];
     return sanitizePrompt(sections.join('\n'), dialect.maxWords);
   }
   const parts = [
     `${recipe.intentLine}${style ? ` ${style}.` : ''}`,
-    `${facts.subject}${appearance ? `, ${appearance}` : ''}.`,
+    `${cue}${facts.subject}${appearance ? `, ${appearance}` : ''}.`,
     ...(features ? [features] : []),
+    ...(constraints ? [constraints] : []),
     `${viewpoint} ${recipe.light} ${setting}.`,
     `${recipe.realismLine}${recipe.modifiers.length > 0 ? ` ${recipe.modifiers.join(', ')}.` : ''}`,
-    ...(constraints ? [constraints] : []),
   ];
   return sanitizePrompt(parts.join(' '), dialect.maxWords);
 }
