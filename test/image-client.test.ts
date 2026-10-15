@@ -32,8 +32,10 @@ test.afterEach(() => {
   delete (globalThis as { fetch?: typeof fetch }).fetch;
   delete process.env.SPECMINE_IMAGE_API_KEY;
   delete process.env.SPECMINE_IMAGE_API_HOST;
+  delete process.env.SPECMINE_IMAGE_MODEL;
   delete process.env.SPECMINE_LLM_API_KEY;
   delete process.env.SPECMINE_LLM_API_HOST;
+  delete process.env.SPECMINE_LLM_MODEL;
   delete process.env.OPENAI_API_KEY;
 });
 
@@ -161,6 +163,19 @@ test('resolves key and host from env with image-first precedence', async () => {
   assert.equal(headers.authorization, 'Bearer img-key');
   void DEFAULT_IMAGE_TIMEOUT_MS;
   void bytesFetch;
+});
+
+test('falls back to SPECMINE_LLM_* when no image settings exist', async () => {
+  process.env.SPECMINE_LLM_API_KEY = 'llm-key';
+  process.env.SPECMINE_LLM_API_HOST = 'http://llm-host';
+  process.env.SPECMINE_LLM_MODEL = 'llm-image-model';
+  const captured = imageFetch({ data: [{ b64_json: Buffer.from('x').toString('base64') }] });
+  await new OpenAiImageClient().generate({ prompt: 'x' });
+  assert.ok(captured.url.startsWith('http://llm-host'));
+  const headers = captured.init.headers as Record<string, string>;
+  assert.equal(headers.authorization, 'Bearer llm-key');
+  const body = JSON.parse(String(captured.init.body)) as { model: string };
+  assert.equal(body.model, 'llm-image-model');
 });
 
 test('omits auth header without a key and honors timeout plus signal', async () => {

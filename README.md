@@ -192,6 +192,11 @@ const image = await generateImage(htmlOrPdf, { category: 'electronics' });
 
 Image generation uses the OpenAI-compatible `/images/generations` endpoint,
 so a LiteLLM proxy works with `SPECMINE_IMAGE_API_HOST` + `SPECMINE_IMAGE_MODEL`.
+Each image setting falls back to its `SPECMINE_LLM_*` counterpart when unset
+(`SPECMINE_IMAGE_API_KEY` → `SPECMINE_LLM_API_KEY`,
+`SPECMINE_IMAGE_API_HOST` → `SPECMINE_LLM_API_HOST`,
+`SPECMINE_IMAGE_MODEL` → `SPECMINE_LLM_MODEL`), so one base URL and key
+covers both text and image calls.
 Skip the classifier with `category` (e.g. `electronics`, `apparel_footwear`,
 `real_estate`); use `mode: 'sequential'` to render from the extracted spec
 instead of a separate visual pass.
