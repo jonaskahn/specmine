@@ -1,21 +1,27 @@
-import type { ArchetypeRecipe, FamilyProfile } from './types.js';
+import type { ArchetypeRecipe, FamilyProfile, SlotKeyMap } from './types.js';
 
 export const ARCHETYPE_RECIPES: Record<ArchetypeRecipe['id'], ArchetypeRecipe> = {
   packshot: {
     id: 'packshot',
     intentLine: 'Photorealistic studio product photograph for an online store listing.',
     composition: 'Centered, slight three-quarter angle, product fills about 80% of the frame.',
-    light: 'Soft diffused studio light with one soft shadow under the product.',
+    light: 'Soft diffused studio light with one realistic contact shadow under the product.',
     background: 'Pure white seamless studio background.',
-    realismLine: 'Real photograph, sharp focus, natural material texture.',
-    modifiers: ['keep exact shape and proportions', 'no props'],
+    realismLine:
+      'Real photograph, sharp focus, visible material texture and natural surface imperfections.',
+    modifiers: [
+      'preserve the exact shape, proportions, color and finish',
+      'no props',
+      'no invented details',
+    ],
     forbidden: ['text', 'logos', 'hands', 'extra products'],
     defaultSize: '1024x1024',
   },
   apparel_flat: {
     id: 'apparel_flat',
     intentLine: 'Photorealistic fashion product photograph for an online store listing.',
-    composition: 'Top-down flat lay, garment fully visible and neatly arranged.',
+    composition:
+      'Top-down flat lay or ghost mannequin, garment fully visible showing true drape and fit.',
     light: 'Even soft studio light, minimal shadow.',
     background: 'Plain neutral surface.',
     realismLine: 'Real photograph, sharp focus, visible fabric texture and stitching.',
@@ -27,7 +33,7 @@ export const ARCHETYPE_RECIPES: Record<ArchetypeRecipe['id'], ArchetypeRecipe> =
     id: 'food_shot',
     intentLine: 'Photorealistic food photograph for a menu or store listing.',
     composition: 'Close-up, slight overhead angle, dish or package as the hero.',
-    light: 'Warm directional natural light with appetizing shadows.',
+    light: 'Warm directional natural light with appetizing shadows and fresh highlights.',
     background: 'Neutral table surface.',
     realismLine: 'Real photograph, vibrant fresh colors, sharp detail.',
     modifiers: ['steam or condensation where plausible'],
@@ -37,8 +43,8 @@ export const ARCHETYPE_RECIPES: Record<ArchetypeRecipe['id'], ArchetypeRecipe> =
   in_situ: {
     id: 'in_situ',
     intentLine: 'Photorealistic lifestyle product photograph showing the product in use.',
-    composition: 'Product as the clear hero in a plausible setting, eye-level angle.',
-    light: 'Natural window light, soft and realistic.',
+    composition: 'Product as the clear hero in a plausible setting, eye-level angle, true scale.',
+    light: 'Natural window light, soft and realistic with believable contact shadows.',
     background: 'Simple uncluttered room or outdoor context.',
     realismLine: 'Real photograph, natural proportions and scale.',
     modifiers: ['at most one or two complementary props'],
@@ -48,10 +54,12 @@ export const ARCHETYPE_RECIPES: Record<ArchetypeRecipe['id'], ArchetypeRecipe> =
   place_exterior: {
     id: 'place_exterior',
     intentLine: 'Photorealistic architectural photograph of a place.',
-    composition: 'Wide shot, eye-level or slightly elevated.',
-    light: 'Natural daylight, clear and balanced.',
+    composition:
+      'Wide shot, eye-level or slightly elevated, tilt-shift perspective with straight verticals.',
+    light: 'Natural daylight, clear and balanced, shadows falling in one consistent direction.',
     background: 'The real surroundings as described in the source.',
-    realismLine: 'Real photograph, straight lines, natural colors.',
+    realismLine:
+      'Real photograph, natural material weathering, no sterile render look, human-scale reference.',
     modifiers: [],
     forbidden: ['people', 'signage text'],
     defaultSize: '1536x1024',
@@ -63,7 +71,7 @@ export const ARCHETYPE_RECIPES: Record<ArchetypeRecipe['id'], ArchetypeRecipe> =
     light: 'Soft gradient lighting on abstract shapes.',
     background: 'Flat or subtle gradient color field.',
     realismLine: 'Modern vector-style illustration, crisp edges.',
-    modifiers: ['palette tied to the topic'],
+    modifiers: ['palette tied to the topic', 'one clear idea, generous negative space'],
     forbidden: ['fake UI', 'logos', 'text', 'screenshots'],
     defaultSize: '1536x1024',
   },
@@ -89,6 +97,68 @@ export const ARCHETYPE_RECIPES: Record<ArchetypeRecipe['id'], ArchetypeRecipe> =
     forbidden: [],
     defaultSize: '1024x1024',
   },
+  generic_subject: {
+    id: 'generic_subject',
+    intentLine: 'Neutral studio photograph of an item for a listing.',
+    composition: 'Centered, slight three-quarter angle, subject fills most of the frame.',
+    light: 'Soft diffused studio light with one soft shadow under the subject.',
+    background: 'Plain light background.',
+    realismLine: 'Real photograph, sharp focus, natural texture.',
+    modifiers: ['single subject only'],
+    forbidden: ['text', 'logos', 'people'],
+    defaultSize: '1024x1024',
+  },
+};
+
+const BASE_KEY_MAP: SlotKeyMap = {
+  subject: [
+    'product',
+    'name',
+    'title',
+    'model',
+    'model number',
+    'brand',
+    'marke',
+    'marque',
+    'marca',
+    'thuong hieu',
+    'thương hiệu',
+    'produkt',
+    'produit',
+    'sản phẩm',
+    'product name',
+    'item',
+  ],
+  color: [
+    'color',
+    'colour',
+    'farbe',
+    'couleur',
+    'colore',
+    'colorway',
+    'finish color',
+    'mau sac',
+    'màu sắc',
+    '色',
+  ],
+  material: [
+    'material',
+    'materials',
+    'materialien',
+    'materiale',
+    'matiere',
+    'matière',
+    'fabric',
+    'stoff',
+    'tissu',
+    'composition',
+    'fabric composition',
+    'chat lieu',
+    'chất liệu',
+    '材质',
+  ],
+  shape: ['shape', 'form', 'silhouette', 'design', 'style', 'cut', 'fit', 'dáng', 'hình dáng'],
+  finish: ['finish', 'oberfläche', 'surface', 'texture', 'finition', 'bề mặt'],
 };
 
 export const FAMILY_PROFILES: Record<FamilyProfile['id'], FamilyProfile> = {
@@ -106,11 +176,13 @@ export const FAMILY_PROFILES: Record<FamilyProfile['id'], FamilyProfile> = {
       'country of origin',
     ],
     visualSlots: ['subject', 'shape', 'colors', 'materials', 'finish', 'visible parts'],
+    keyMap: BASE_KEY_MAP,
   },
   digital: {
     id: 'digital',
     specHints: ['version', 'platform', 'license', 'pricing tiers', 'integrations', 'requirements'],
     visualSlots: ['subject', 'colors', 'setting'],
+    keyMap: BASE_KEY_MAP,
   },
   service: {
     id: 'service',
@@ -123,15 +195,18 @@ export const FAMILY_PROFILES: Record<FamilyProfile['id'], FamilyProfile> = {
       'location',
     ],
     visualSlots: ['subject', 'setting', 'mood'],
+    keyMap: BASE_KEY_MAP,
   },
   entity: {
     id: 'entity',
     specHints: ['name', 'role or industry', 'founded', 'location', 'size', 'contact'],
     visualSlots: ['subject', 'setting'],
+    keyMap: BASE_KEY_MAP,
   },
   concept: {
     id: 'concept',
     specHints: ['author', 'date', 'source', 'topic', 'quantified claims', 'entities'],
     visualSlots: ['subject', 'mood', 'setting'],
+    keyMap: BASE_KEY_MAP,
   },
 };

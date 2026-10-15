@@ -16,6 +16,7 @@ export type ArchetypeId =
   | 'place_exterior'
   | 'abstract_hero'
   | 'editorial_concept'
+  | 'generic_subject'
   | 'none';
 
 export type DomainId =
@@ -57,10 +58,15 @@ export interface ArchetypeRecipe {
   defaultSize: string;
 }
 
+export type VisualSlot = 'subject' | 'color' | 'material' | 'shape' | 'finish';
+
+export type SlotKeyMap = Record<VisualSlot, string[]>;
+
 export interface FamilyProfile {
   id: FamilyId;
   specHints: string[];
   visualSlots: string[];
+  keyMap: SlotKeyMap;
 }
 
 export interface DomainProfile {
@@ -69,6 +75,16 @@ export interface DomainProfile {
   subjectNoun: string;
   criteria: string;
   specHints: string[];
+  /** category-specific noise to ignore during spec extraction */
+  specIgnore: string[];
+  /** depictable fields; defaults to the family list when empty */
+  visualSlots: string[];
+  /** explicitly non-depictable concepts for the visual prompt */
+  notDepictable: string[];
+  /** minimum filled visual slots before an image is rendered */
+  minFacts: number;
+  /** extra spec-key synonyms merged into the family key map */
+  keyMapAdd?: Partial<SlotKeyMap>;
   archetype: ArchetypeId;
   defaultStyle: string;
   defaultSize: string;
@@ -78,6 +94,7 @@ export interface DomainProfile {
 export interface ResolvedProfile extends DomainProfile {
   familySpecHints: string[];
   familyVisualSlots: string[];
+  keyMap: SlotKeyMap;
   recipe: ArchetypeRecipe;
 }
 
