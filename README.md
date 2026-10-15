@@ -184,10 +184,16 @@ const result = await analyze('The Acme Kettle holds 1.5L, matte black steel.', {
   mode: 'parallel', // or 'sequential': extract spec first, render image from it
 });
 // { category: { kind, domain, family, archetype, confidence },
-//   spec: { ... }, image: { blob, mimeType, prompt } }
+//   spec: { ... }, image: { blob, mimeType, base64, dataUrl } }
 
-// Image only
+// Image only — the prompt is built internally, the result is the image itself
 const image = await generateImage(htmlOrPdf, { category: 'electronics' });
+// image.base64 — raw base64, no prefix
+// image.dataUrl — "data:image/png;base64,...", ready for <img src>
+// import { generateImageBase64 } from '@jonaskahn/specmine'; // base64 string only
+
+// Pass image: { includePrompt: true } to also get the internal render prompt
+// (and the provider's revised prompt) back in the result for debugging.
 ```
 
 Image generation uses the OpenAI-compatible `/images/generations` endpoint,

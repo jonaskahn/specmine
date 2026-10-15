@@ -8,4 +8,4 @@ const result = await analyze(
   { outputs: ['spec', 'image'], mode: 'sequential', category: 'sports_outdoor_toys' },
 );
 console.log(JSON.stringify(result.spec, null, 2));
-console.log(result.image?.prompt);
+console.log(result.image?.dataUrl.slice(0, 60) + '...');

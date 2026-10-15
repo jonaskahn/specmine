@@ -29,4 +29,4 @@ const direct = await analyze('Acme desk lamp, brushed aluminium, dimmable.', {
     size: '1792x1024',
   },
 });
-console.log(direct.image?.prompt);
+console.log(direct.image?.dataUrl.slice(0, 60) + '...');
