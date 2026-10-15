@@ -117,12 +117,12 @@ test('picks visual facts from nested multilingual specs', () => {
 test('picks brand across major languages, never as a feature', () => {
   const { keyMap } = resolveProfile('electronics');
   const cases: Array<[SpecsResult, string]> = [
-    [{ 'ブランド': 'Acme' }, 'Acme'],
+    [{ ブランド: 'Acme' }, 'Acme'],
     [{ Details: { Merek: 'Acme' } }, 'Acme'],
     [{ Hersteller: 'Acme', Product: 'kettle' }, 'Acme'],
     [{ 'nhà sản xuất': 'Acme' }, 'Acme'],
     [{ 'الشركة المصنعة': 'Acme' }, 'Acme'],
-    [{ '制造商': 'Acme' }, 'Acme'],
+    [{ 制造商: 'Acme' }, 'Acme'],
   ];
   for (const [spec, brand] of cases) {
     const facts = pickVisualFacts(spec, ['kettle'], 'product', keyMap);
