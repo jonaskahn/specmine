@@ -247,6 +247,78 @@ registerCategory('wine' as DomainId, {
 });
 ```
 
+### Workflow
+
+```
+input (string | Blob | URL)
+  │  read once — HTML→Markdown, PDF→Markdown, '' → EMPTY_INPUT
+  ▼
+classify ──► { kind, domain, scope, visual } ──► category profile
+  │                                              (spec hints + ignore list,
+  │                                               visual slots, archetype)
+  ▼
+outputs? ── ['spec'] ──► spec flow ──────────────────────►─┐
+         └─ ['image'] ─► image gate ──► image flow ──►─┤
+                                                      ▼
+                              { category, spec?, image?, errors? }
+```
+
+Only requested flows run. One flow failing never loses the other — the
+failure lands in `errors` (`{ spec?, image? }`). With `failFast: true` the
+first failure throws instead. If every requested flow fails, it throws.
+
+```
+classifier modes (classifier.mode → provider → SPECMINE_CLASSIFIER → auto)
+
+  auto ─┬─ key set ──► Jev ─┬─ ok ──────────► { kind, domain, … }
+        │                   ├─ low confidence ► general (low_confidence)
+        │                   └─ error ─────────► general (jev_error)
+        └─ no key ───► general, zero calls (no_key)
+
+  jev ──► Jev only, same fallbacks, never a silent LLM call
+  llm ──► small structured-output call on your text provider
+  off ──► general profile (disabled)
+```
+
+```
+parallel (default)                    sequential
+
+  ┌─ spec flow ────────────┐            spec flow
+  │ text + category prompt │                 │
+  │  → structured spec    │                 ▼
+  └────────┬───────────────┘            enough visual facts?
+           │                           ┌─ yes ─► render from spec
+  ┌─ image flow ───────────┐           └─ no ──► dynamic flow
+  │ visual-facts prompt    │
+  │  → facts → render      │           (also used when the spec
+  └────────┬───────────────┘            call itself fails)
+           ▼
+  Promise.allSettled → merged result
+```
+
+```
+image flow detail
+
+  facts ──► prompt builder ──► POST {apiHost}/images/generations
+  │         (archetype recipe      { model, prompt, size, n: 1 }
+  │          + model dialect,   │
+  │          prices/SKUs/units  ▼
+  │          stripped)      b64_json → bytes ─┐
+  │                         url ──► fetch ────┤
+  │                                           ▼
+  │                       { blob, mimeType, base64, dataUrl }
+  │                       (+ prompt only with includePrompt: true)
+  │
+  ├─ dynamic: visual-facts LLM call on the cleaned text
+  │           (refuses when facts are too thin for the category)
+  └─ from-spec: category key-map picks depictable spec keys
+                (falls back to dynamic when the spec is thin)
+
+  skipped without a call when: not depictable, non_content,
+  collection/multiple scope, policy_legal, or allowImage: false
+  → errors.image = UNSUPPORTED_INPUT, other outputs unaffected
+```
+
 ### Timeouts and cancellation
 
 Abort a hanging LLM call after N milliseconds, or wire in your own signal:
