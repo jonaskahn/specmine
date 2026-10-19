@@ -27,6 +27,8 @@ import { hasEnoughFacts } from './image/facts.js';
 import { resolveGroundedFacts } from './image/ladder.js';
 import { ARCHETYPE_RECIPES } from './category/archetypes.js';
 import { pickVisualFacts } from './image/fact-picker.js';
+import type { ImageCandidate } from './media/candidates.js';
+import { buildProseRequest, parseProse, type ProseResult } from './prompts/summary.js';
 import { pickReusableImage } from './media/candidates.js';
 import { emptySummary, logCostSummary, recordUsage } from './telemetry/cost.js';
 import { buildImagePrompt } from './image/prompt-builder.js';
@@ -35,9 +37,9 @@ import type {
   CallOptions,
   ExtractInput,
   GeneratedImage,
+  ImageEntry,
   ProcessOptions,
   ProcessResult,
-  PictureInfo,
   SpecsResult,
   TagsResult,
 } from './types.js';
@@ -236,6 +238,43 @@ export class DefaultPipeline {
     });
     const specMode = options?.tags === true ? 'specs-and-tags' : 'specs';
 
+    // A title or description the source states for itself is free and always
+    // wins; generation only fills what is missing. With a summary not wanted
+    // and both stated, there is nothing left to ask for and no call is made.
+    const haveTitle = readResult.title !== undefined;
+    const haveDescription = readResult.description !== undefined;
+    const wantSummary = options?.summary !== false;
+    const needProse = wantSummary || !haveTitle || !haveDescription;
+
+    const runProse = async (): Promise<ProseResult> =>
+      metered
+        .withStage('summary', () =>
+          // `metered`, not the raw provider: without it the call happens but
+          // its tokens never reach the cost summary.
+          metered.complete(
+            buildProseRequest(
+              text,
+              readResult.kind,
+              {
+                title: !haveTitle,
+                description: !haveDescription,
+                summary: wantSummary,
+              },
+              {
+                // Whatever the source stated is handed over even though we then
+                // keep it: the model needs the real wording to write a summary
+                // that agrees with it, and for html it never appears in the text.
+                ...(readResult.title !== undefined ? { title: readResult.title } : {}),
+                ...(readResult.description !== undefined
+                  ? { description: readResult.description }
+                  : {}),
+              },
+            ),
+            callOptions,
+          ),
+        )
+        .then((response) => parseProse(response.content));
+
     const runSpec = async (): Promise<{ spec: SpecsResult; tags: TagsResult }> =>
       metered.withStage('spec', () =>
         extractor.extractFromText(text, options, specMode, profile, readResult.kind),
@@ -270,6 +309,8 @@ export class DefaultPipeline {
     let image: GeneratedImage | undefined;
     let specError: ExtractionError | undefined;
     let imageError: ExtractionError | undefined;
+    let prose: ProseResult | undefined;
+    let proseError: ExtractionError | undefined;
 
     const blocker = wantImage ? imageBlocker(classification, profile) : undefined;
     const skipReason =
@@ -316,6 +357,15 @@ export class DefaultPipeline {
           imageError = toExtractionError(error);
         }
       }
+      // Sequential means one call at a time, so the prose waits its turn rather
+      // than riding the parallel path.
+      if (needProse) {
+        try {
+          prose = await runProse();
+        } catch (error) {
+          proseError = toExtractionError(error);
+        }
+      }
     } else {
       const tasks: Array<Promise<unknown>> = [];
       if (wantSpec) {
@@ -343,22 +393,33 @@ export class DefaultPipeline {
           ),
         );
       }
+      if (needProse) {
+        tasks.push(
+          runProse().then(
+            (result) => {
+              prose = result;
+            },
+            (error: unknown) => {
+              proseError = toExtractionError(error);
+            },
+          ),
+        );
+      }
       await Promise.all(tasks);
     }
 
     if (options?.failFast === true) {
       if (specError) throw specError;
       if (imageError && wantImage && image === undefined) throw imageError;
+      if (proseError) throw proseError;
     }
-    const picture: PictureInfo | undefined = wantImage
-      ? reusable !== undefined
-        ? { outcome: 'reused', source: reusable.source, url: reusable.url, alt: reusable.alt }
-        : image !== undefined
-          ? { outcome: 'generated' }
-          : blocker === 'refused'
-            ? { outcome: 'none' }
-            : { outcome: 'blocked' }
-      : undefined;
+    const picture: ImageEntry[] = toImageEntries({
+      wantImage,
+      candidates: readResult.candidates ?? [],
+      reusable,
+      image,
+      blocker,
+    });
     // A reused picture satisfies the image output just as a drawn one does.
     const imageSatisfied = image !== undefined || reusable !== undefined;
     const specFailed = wantSpec && spec === undefined;
@@ -381,19 +442,27 @@ export class DefaultPipeline {
         ...(classification.reason !== undefined ? { reason: classification.reason } : {}),
       },
     };
+    if (readResult.title !== undefined) result.title = readResult.title;
+    if (readResult.description !== undefined) result.description = readResult.description;
+    if (prose !== undefined) {
+      // Generation fills gaps only: whatever the source stated stands.
+      if (!haveTitle && prose.title) result.title = prose.title;
+      if (!haveDescription && prose.description) result.description = prose.description;
+      if (wantSummary && prose.summary) result.summary = prose.summary;
+    }
     if (spec !== undefined) result.spec = spec;
     if (tags !== undefined && options?.tags === true) result.tags = tags;
     if (image !== undefined) result.image = image;
-    if (picture !== undefined) result.picture = picture;
-    // The full evidence behind the decision, so a caller can pick a different
-    // image than we did without re-reading the page.
-    if (readResult.candidates?.length) result.images = readResult.candidates;
+    // Every picture the input offered plus the decision, so a caller can pick a
+    // different image than we did without re-reading the source.
+    result.images = picture;
     result.cost = cost;
     logCostSummary(cost);
-    if (specError ?? imageError) {
+    if (specError ?? imageError ?? proseError) {
       result.errors = {
         ...(specError ? { spec: specError } : {}),
         ...(imageError ? { image: imageError } : {}),
+        ...(proseError ? { summary: proseError } : {}),
       };
     }
     log.info('Process complete', {
@@ -495,6 +564,43 @@ export class DefaultPipeline {
   }
 }
 
+/**
+ * One entry per picture the input offered, each saying what it is and whether it
+ * was the one we picked — so a caller can choose a different image without
+ * re-reading the source. A run that ends with no picture still gets an entry,
+ * because `blocked` (the draw was refused or failed) and `none` (the category
+ * never takes one) are recorded nowhere else.
+ */
+function toImageEntries(options: {
+  wantImage: boolean;
+  candidates: ImageCandidate[];
+  reusable: ImageCandidate | undefined;
+  image: GeneratedImage | undefined;
+  blocker: 'blocked' | 'refused' | undefined;
+}): ImageEntry[] {
+  const { wantImage, candidates, reusable, image, blocker } = options;
+  // No image was asked for, so no decision was made and none is reported.
+  if (!wantImage) return [];
+
+  const extracted: ImageEntry[] = candidates.map((candidate) => ({
+    type: 'extracted',
+    url: candidate.url,
+    source: candidate.source,
+    alt: candidate.alt,
+    ...(candidate.score !== undefined ? { score: candidate.score } : {}),
+    ...(candidate.position !== undefined ? { position: candidate.position } : {}),
+    ...(candidate.width !== undefined ? { width: candidate.width } : {}),
+    ...(candidate.height !== undefined ? { height: candidate.height } : {}),
+    ...(candidate.type !== undefined ? { mediaType: candidate.type } : {}),
+    ...(candidate.title !== undefined ? { title: candidate.title } : {}),
+    selected: candidate === reusable,
+  }));
+
+  if (reusable !== undefined) return extracted;
+  if (image !== undefined) return [...extracted, { type: 'generated', image, selected: true }];
+  return [{ type: blocker === 'refused' ? 'none' : 'blocked', selected: true }];
+}
+
 function toExtractionError(error: unknown): ExtractionError {
   if (error instanceof ExtractionError) return error;
   return new ExtractionError(
@@ -511,7 +617,8 @@ export function createPipeline(
   const llm = dependencies?.llm ?? providerFrom(options);
   const validator = dependencies?.validator ?? new JsonSpecValidator();
   const reader =
-    dependencies?.reader ?? new DefaultReader(new NapiPdfInspector(), options?.videoSession);
+    dependencies?.reader ??
+    new DefaultReader(new NapiPdfInspector(), options?.videoSession, options?.videoTranscriptMs);
   return new DefaultPipeline({
     reader,
     llm,

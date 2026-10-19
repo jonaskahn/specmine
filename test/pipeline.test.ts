@@ -10,6 +10,8 @@ import type { InputReader, ReadResult } from '../src/input/reader.js';
 import { registerCategory, resetCategoryOverrides } from '../src/category/registry.js';
 import type { ImageCandidate } from '../src/media/candidates.js';
 import { JsonSpecValidator } from '../src/spec/validator.js';
+import { estimateCost } from '../src/telemetry/cost.js';
+import { PROSE_MAX_TOKENS } from '../src/prompts/summary.js';
 import {
   analyze,
   createPipeline,
@@ -31,12 +33,36 @@ function reader(text: string): InputReader {
   };
 }
 
-function scriptLlm(responses: Array<string | Error>): { llm: LlmProvider; count: () => number } {
+/**
+ * Answers the prose stage on its own rather than consuming a scripted response,
+ * so the existing positional scripts stay about spec and image. Tests that care
+ * about prose pass `prose` instead.
+ */
+const DEFAULT_PROSE = JSON.stringify({
+  title: 'Acme Kettle',
+  description: 'A matte black stainless steel kettle.',
+  summary: 'A short product listing for the Acme Kettle.',
+});
+
+function scriptLlm(
+  responses: Array<string | Error>,
+  prose: string = DEFAULT_PROSE,
+): {
+  llm: LlmProvider;
+  count: () => number;
+  proseCalls: () => number;
+} {
   let index = 0;
+  let proseCount = 0;
   return {
     count: () => index,
+    proseCalls: () => proseCount,
     llm: {
-      async complete(): Promise<LlmResponse> {
+      async complete(request): Promise<LlmResponse> {
+        if (request.schemaName === 'specmine_prose') {
+          proseCount += 1;
+          return { content: prose, usage: { inputTokens: 100, outputTokens: 40 } };
+        }
         const next = responses[index] ?? '{}';
         index += 1;
         if (next instanceof Error) throw next;
@@ -93,8 +119,9 @@ function pipeline(
   responses: Array<string | Error>,
   classification: Classification | Error = productClassification(),
   image: ImageProvider = imageProvider(),
+  prose: string = DEFAULT_PROSE,
 ) {
-  const script = scriptLlm(responses);
+  const script = scriptLlm(responses, prose);
   const deps = {
     reader: reader(TEXT),
     llm: script.llm,
@@ -102,7 +129,11 @@ function pipeline(
     classifier: classifier(classification),
     imageProvider: image,
   };
-  return { pipeline: new DefaultPipeline(deps), calls: script.count };
+  return {
+    pipeline: new DefaultPipeline(deps),
+    calls: script.count,
+    proseCalls: script.proseCalls,
+  };
 }
 
 const SPECS_JSON = JSON.stringify({ Color: 'matte black', Capacity: '1.5 L' });
@@ -797,11 +828,19 @@ test('jev outage falls back to generic without an llm call', async () => {
     });
   }) as typeof fetch;
   try {
-    const pipe = createPipeline(undefined, { classifier: { provider: 'jev' } });
+    // summary:false so the count stays about the spec call, which is what
+    // "falls back without an llm call" is claiming.
+    const pipe = createPipeline(undefined, {
+      classifier: { provider: 'jev' },
+      summary: false,
+    });
     const result = await pipe.process('Acme kettle, black steel.');
     assert.equal(result.category.source, 'fallback');
     assert.equal(result.category.reason, 'jev_error');
-    assert.equal(llmCalls, 1);
+    // Two, not one: the spec call, plus the prose call that always follows a
+    // source stating no title or description. summary:false does not suppress
+    // that — filling a missing title is the default, not the summary.
+    assert.equal(llmCalls, 2);
   } finally {
     delete (globalThis as { fetch?: typeof fetch }).fetch;
     delete process.env.TYPESAFE_API_KEY;
@@ -830,14 +869,26 @@ test('ladder briefs reuse the configured image model', async () => {
       };
     },
   };
+  // This reader states its own title and description, so with summary:false
+  // there is nothing left to generate and every call is an image brief.
   const built = new DefaultPipeline({
-    reader: reader(TEXT),
+    reader: {
+      async read(): Promise<ReadResult> {
+        return { text: TEXT, imageOnly: false, title: 'Acme Kettle', description: 'A kettle.' };
+      },
+    },
     llm,
     validator: new JsonSpecValidator(),
     classifier: classifier(productClassification()),
     imageProvider: imageProvider(),
   });
-  const result = await built.process('x', { outputs: ['image'], image: { model: 'img-model' } });
+  // summary:false keeps every call an image brief, which is what the assertion
+  // below is about.
+  const result = await built.process('x', {
+    outputs: ['image'],
+    image: { model: 'img-model' },
+    summary: false,
+  });
   assert.equal(result.image?.grounding, 'contextual');
   assert.ok(models.every((model) => model === 'img-model'));
 });
@@ -862,9 +913,11 @@ test("the page's own picture is reused instead of drawn", async () => {
     }),
   });
   const result = await built.process('x', { outputs: ['image'] });
-  assert.equal(result.picture?.outcome, 'reused');
-  assert.equal(result.picture?.url, 'https://cdn.example.com/hero.jpg');
-  assert.equal(result.picture?.source, 'og:image');
+  const chosen = result.images?.find((entry) => entry.selected);
+  assert.equal(chosen?.type, 'extracted');
+  assert.equal(chosen?.url, 'https://cdn.example.com/hero.jpg');
+  assert.equal(chosen?.type === 'extracted' ? chosen.source : undefined, 'og:image');
+  assert.equal(result.images?.length, 1);
   assert.equal(generated, 0);
 });
 
@@ -875,7 +928,7 @@ test('a page with no picture falls through to drawing', async () => {
     imageProvider: imageProvider(),
   });
   const result = await built.process('x', { outputs: ['image'] });
-  assert.equal(result.picture?.outcome, 'generated');
+  assert.equal(result.images?.at(-1)?.type, 'generated');
 });
 
 test('non-content states a blocked outcome instead of staying silent', async () => {
@@ -890,13 +943,13 @@ test('non-content states a blocked outcome instead of staying silent', async () 
     category: 'electronics',
     kind: 'non_content',
   });
-  assert.equal(result.picture?.outcome, 'blocked');
+  assert.deepEqual(result.images, [{ type: 'blocked', selected: true }]);
 });
 
 test('a spec-only run states no picture decision', async () => {
   const built = createPipeline({ reader: reader(TEXT), llm: scriptLlm([SPECS_JSON]).llm });
   const result = await built.process(TEXT);
-  assert.equal(result.picture, undefined);
+  assert.deepEqual(result.images, []);
 });
 
 test('every candidate is returned, with the decision naming one of them', async () => {
@@ -911,8 +964,16 @@ test('every candidate is returned, with the decision naming one of them', async 
     imageProvider: imageProvider(),
   });
   const result = await built.process('x', { outputs: ['image'] });
-  assert.deepEqual(result.images, candidates);
-  assert.equal(result.picture?.url, candidates[0]?.url);
+  assert.equal(result.images?.length, candidates.length);
+  assert.deepEqual(
+    result.images?.map((entry) => (entry.type === 'extracted' ? entry.url : entry.type)),
+    candidates.map((candidate) => candidate.url),
+  );
+  // List order is preserved and exactly one entry is marked as the pick.
+  assert.deepEqual(
+    result.images?.map((entry) => entry.selected),
+    [true, false, false],
+  );
 });
 
 test('a page offering no pictures reports no image list', async () => {
@@ -921,7 +982,7 @@ test('a page offering no pictures reports no image list', async () => {
     llm: scriptLlm([SPECS_JSON]).llm,
   });
   const result = await built.process('x');
-  assert.equal(result.images, undefined);
+  assert.deepEqual(result.images, []);
 });
 
 test('the run reports its token usage and cost', async () => {
@@ -1031,7 +1092,7 @@ test('a failed image draw states a blocked outcome', async () => {
     outputs: ['image', 'spec'],
     category: 'electronics',
   });
-  assert.equal(result.picture?.outcome, 'blocked');
+  assert.deepEqual(result.images, [{ type: 'blocked', selected: true }]);
   assert.ok(result.errors?.image);
 });
 
@@ -1042,7 +1103,7 @@ test('a reader with no candidates field falls through to drawing', async () => {
     imageProvider: imageProvider(),
   });
   const result = await built.process('x', { outputs: ['image'], category: 'electronics' });
-  assert.equal(result.picture?.outcome, 'generated');
+  assert.equal(result.images?.at(-1)?.type, 'generated');
 });
 
 test('a category that forbids images states none rather than drawing', async () => {
@@ -1055,9 +1116,501 @@ test('a category that forbids images states none rather than drawing', async () 
       imageProvider: imageProvider(),
     });
     const result = await built.process('x', { outputs: ['image'] });
-    assert.equal(result.picture?.outcome, 'none');
+    assert.deepEqual(result.images, [{ type: 'none', selected: true }]);
     assert.match(result.errors?.image?.message ?? '', /does not allow images/);
   } finally {
     resetCategoryOverrides();
   }
+});
+
+/* --- prose: title, description and summary --- */
+
+/** A pipeline whose reader states the given title/description (undefined = the
+ *  source states neither) and whose prose stage answers with `prose`. */
+function prosePipeline(options: {
+  stated?: { title?: string; description?: string };
+  prose?: string;
+  responses?: Array<string | Error>;
+}): { pipeline: DefaultPipeline; proseCalls: () => number } {
+  const script = scriptLlm(options.responses ?? [SPECS_JSON], options.prose ?? DEFAULT_PROSE);
+  return {
+    pipeline: new DefaultPipeline({
+      reader: {
+        async read(): Promise<ReadResult> {
+          return {
+            text: TEXT,
+            imageOnly: false,
+            ...(options.stated?.title !== undefined ? { title: options.stated.title } : {}),
+            ...(options.stated?.description !== undefined
+              ? { description: options.stated.description }
+              : {}),
+          };
+        },
+      },
+      llm: script.llm,
+      validator: new JsonSpecValidator(),
+      classifier: classifier(productClassification()),
+      imageProvider: imageProvider(),
+    }),
+    proseCalls: script.proseCalls,
+  };
+}
+
+test('a source stating nothing leaves title, description and summary to the generator', async () => {
+  const { pipeline: pipe, proseCalls } = prosePipeline({});
+  const result = await pipe.process('x', { category: 'electronics' });
+  assert.equal(result.title, 'Acme Kettle');
+  assert.equal(result.description, 'A matte black stainless steel kettle.');
+  assert.equal(result.summary, 'A short product listing for the Acme Kettle.');
+  assert.equal(proseCalls(), 1);
+});
+
+test("a source's own title and description are never overwritten", async () => {
+  const { pipeline: pipe } = prosePipeline({
+    stated: { title: 'Source Title', description: 'Source blurb' },
+    prose: JSON.stringify({
+      title: 'Generated',
+      description: 'Generated blurb',
+      summary: 'An overview.',
+    }),
+  });
+  const result = await pipe.process('x', { category: 'electronics' });
+  assert.equal(result.title, 'Source Title');
+  assert.equal(result.description, 'Source blurb');
+  assert.equal(result.summary, 'An overview.');
+});
+
+test('a title-only source keeps its title and gains the rest', async () => {
+  const { pipeline: pipe } = prosePipeline({ stated: { title: 'Only Title' } });
+  const result = await pipe.process('x', { category: 'electronics' });
+  assert.equal(result.title, 'Only Title');
+  assert.equal(result.description, 'A matte black stainless steel kettle.');
+  assert.ok(result.summary);
+});
+
+test('summary:false on a fully stated source makes no prose call at all', async () => {
+  const { pipeline: pipe, proseCalls } = prosePipeline({
+    stated: { title: 'T', description: 'D' },
+  });
+  const result = await pipe.process('x', { category: 'electronics', summary: false });
+  assert.equal(proseCalls(), 0);
+  assert.equal(result.title, 'T');
+  assert.equal(result.description, 'D');
+  assert.equal(result.summary, undefined);
+});
+
+test('summary:false still generates a title the source never stated', async () => {
+  const { pipeline: pipe, proseCalls } = prosePipeline({});
+  const result = await pipe.process('x', { category: 'electronics', summary: false });
+  assert.equal(proseCalls(), 1);
+  assert.equal(result.title, 'Acme Kettle');
+  assert.equal(result.summary, undefined);
+});
+
+test('a prose response that is not json states a summary error, not a crash', async () => {
+  const { pipeline: pipe } = prosePipeline({ prose: 'not json at all' });
+  const result = await pipe.process('x', { category: 'electronics' });
+  assert.equal(result.errors?.summary?.code, 'INVALID_OUTPUT');
+  // The spec is untouched: prose never invalidates a good extraction.
+  assert.deepEqual(result.spec, { Color: 'matte black', Capacity: '1.5 L' });
+});
+
+test('a prose response with no usable field is a summary error', async () => {
+  const { pipeline: pipe } = prosePipeline({ prose: '{}' });
+  const result = await pipe.process('x', { category: 'electronics' });
+  assert.equal(result.errors?.summary?.code, 'INVALID_OUTPUT');
+});
+
+test('failFast surfaces a prose failure', async () => {
+  const { pipeline: pipe } = prosePipeline({ prose: 'not json at all' });
+  await assert.rejects(
+    () => pipe.process('x', { category: 'electronics', failFast: true }),
+    /JSON/,
+  );
+});
+
+test('the prose stage is billed and priced as its own stage', async () => {
+  const { pipeline: pipe } = prosePipeline({});
+  const result = await pipe.process('x', { category: 'electronics' });
+  const summaryCalls = result.cost?.calls.filter((call) => call.stage === 'summary') ?? [];
+  assert.ok(summaryCalls.length > 0, 'the summary stage must appear in the cost summary');
+  // Priced, not merely counted: a stage nobody pays for would still show up in
+  // the call list, and only the dollar total would give it away.
+  const withSummary = estimateCost(result.cost!);
+  const withoutSummary = estimateCost({
+    ...result.cost!,
+    calls: result.cost!.calls.filter((call) => call.stage !== 'summary'),
+  });
+  assert.ok(withSummary > withoutSummary, 'the summary stage must add to the estimate');
+});
+
+test('prose reads only the head window while the spec still reads everything', async () => {
+  const long = `${'HEAD '.repeat(2000)}TAIL MARKER`;
+  const bodies: Array<{ prose: boolean; text: string }> = [];
+  const built = new DefaultPipeline({
+    reader: {
+      async read(): Promise<ReadResult> {
+        return { text: long, imageOnly: false, title: 'T', description: 'D' };
+      },
+    },
+    llm: {
+      async complete(request): Promise<LlmResponse> {
+        const isProse = request.schemaName === 'specmine_prose';
+        bodies.push({ prose: isProse, text: String(request.messages[1]?.content) });
+        return {
+          content: isProse
+            ? JSON.stringify({ title: 'x', description: 'y', summary: 'z' })
+            : SPECS_JSON,
+        };
+      },
+    },
+    validator: new JsonSpecValidator(),
+    classifier: classifier(productClassification()),
+    imageProvider: imageProvider(),
+  });
+  await built.process('x', { category: 'electronics' });
+  const proseBody = bodies.find((b) => b.prose);
+  const specBody = bodies.find((b) => !b.prose);
+  assert.ok(proseBody);
+  assert.ok(specBody);
+  assert.ok(proseBody.text.length < long.length, 'prose must see only the window');
+  assert.match(proseBody.text, /…truncated$/);
+  assert.doesNotMatch(proseBody.text, /TAIL MARKER/);
+  assert.match(specBody.text, /TAIL MARKER/);
+});
+
+test('a video run describes the prose request as a video transcript', async () => {
+  let system = '';
+  const built = new DefaultPipeline({
+    reader: {
+      async read(): Promise<ReadResult> {
+        return {
+          text: '# A Video\n\n## Transcript\n\nspoken words',
+          imageOnly: false,
+          kind: 'video',
+        };
+      },
+    },
+    llm: {
+      async complete(request): Promise<LlmResponse> {
+        if (request.schemaName === 'specmine_prose') {
+          system = String(request.messages[0]?.content);
+          return { content: JSON.stringify({ title: 't', description: 'd', summary: 's' }) };
+        }
+        return { content: SPECS_JSON };
+      },
+    },
+    validator: new JsonSpecValidator(),
+    classifier: classifier(productClassification()),
+    imageProvider: imageProvider(),
+  });
+  await built.process('x', { category: 'electronics' });
+  assert.match(system, /caption transcript/);
+  assert.match(system, /Transcript section is what was actually said/);
+});
+
+test('a non-video run describes the prose request as a document', async () => {
+  let system = '';
+  const built = new DefaultPipeline({
+    reader: reader(TEXT),
+    llm: {
+      async complete(request): Promise<LlmResponse> {
+        if (request.schemaName === 'specmine_prose') {
+          system = String(request.messages[0]?.content);
+          return { content: JSON.stringify({ title: 't', description: 'd', summary: 's' }) };
+        }
+        return { content: SPECS_JSON };
+      },
+    },
+    validator: new JsonSpecValidator(),
+    classifier: classifier(productClassification()),
+    imageProvider: imageProvider(),
+  });
+  await built.process('x', { category: 'electronics' });
+  assert.match(system, /The content is a document\./);
+});
+
+test('the prose schema asks only for the fields the source left unstated', async () => {
+  const schemas: Array<unknown> = [];
+  const built = new DefaultPipeline({
+    reader: {
+      async read(): Promise<ReadResult> {
+        // Title stated, description not: only those two may be requested.
+        return { text: TEXT, imageOnly: false, title: 'Stated' };
+      },
+    },
+    llm: {
+      async complete(request): Promise<LlmResponse> {
+        if (request.schemaName === 'specmine_prose') {
+          schemas.push(request.schema);
+          return {
+            content: JSON.stringify({ description: 'Written', summary: 'Overview' }),
+            usage: { inputTokens: 10, outputTokens: 5 },
+          };
+        }
+        return { content: SPECS_JSON };
+      },
+    },
+    validator: new JsonSpecValidator(),
+    classifier: classifier(productClassification()),
+    imageProvider: imageProvider(),
+  });
+  const result = await built.process('x', { category: 'electronics' });
+  assert.equal(result.title, 'Stated');
+  assert.equal(result.description, 'Written');
+  assert.deepEqual(schemas[0], {
+    type: 'object',
+    properties: { description: { type: 'string' }, summary: { type: 'string' } },
+    required: ['description', 'summary'],
+    additionalProperties: false,
+  });
+});
+
+test('the prose stage leaves room for the model to think before answering', () => {
+  // A tight cap made a reasoning model spend it all thinking and return
+  // truncated JSON, which surfaced as INVALID_OUTPUT on a live video.
+  assert.ok(PROSE_MAX_TOKENS >= 2000, `maxTokens was ${PROSE_MAX_TOKENS}`);
+});
+
+test('an extracted entry carries every dimension the markup stated', async () => {
+  const built = createPipeline({
+    reader: readerWithPictures(TEXT, [
+      {
+        url: 'https://cdn.example.com/hero.webp',
+        source: 'og:image',
+        alt: 'the kettle',
+        score: 1,
+        width: 1600,
+        height: 900,
+        type: 'image/webp',
+        title: 'The kettle',
+      },
+    ]),
+    llm: scriptLlm([SPECS_JSON]).llm,
+    imageProvider: imageProvider(),
+  });
+  const result = await built.process('x', { outputs: ['image'] });
+  assert.deepEqual(result.images, [
+    {
+      type: 'extracted',
+      url: 'https://cdn.example.com/hero.webp',
+      source: 'og:image',
+      alt: 'the kettle',
+      score: 1,
+      // The mime type is renamed so it cannot collide with the type tag.
+      mediaType: 'image/webp',
+      width: 1600,
+      height: 900,
+      title: 'The kettle',
+      selected: true,
+    },
+  ]);
+});
+
+test('an extracted entry omits what the markup never stated', async () => {
+  const built = createPipeline({
+    reader: readerWithPictures(TEXT, [
+      { url: 'https://cdn.example.com/a.jpg', source: 'gallery', alt: 'A', score: 0.6 },
+    ]),
+    llm: scriptLlm([SPECS_JSON]).llm,
+    imageProvider: imageProvider(),
+  });
+  const result = await built.process('x', { outputs: ['image'] });
+  const entry = result.images?.[0];
+  assert.ok(entry && entry.type === 'extracted');
+  // Absent keys, not empty ones, so a caller can tell what the page omitted.
+  assert.ok(!('width' in entry));
+  assert.ok(!('height' in entry));
+  assert.ok(!('mediaType' in entry));
+  assert.ok(!('title' in entry));
+  assert.ok(!('position' in entry));
+});
+
+test('a stated dimension is carried and an explicit undefined is not', async () => {
+  const built = createPipeline({
+    reader: readerWithPictures(TEXT, [
+      {
+        url: 'https://cdn.example.com/a.jpg',
+        source: 'gallery',
+        alt: 'A',
+        score: 0.6,
+        position: 0,
+        height: 900,
+        title: undefined,
+      },
+    ]),
+    llm: scriptLlm([SPECS_JSON]).llm,
+    imageProvider: imageProvider(),
+  });
+  const result = await built.process('x', { outputs: ['image'] });
+  const entry = result.images?.[0];
+  assert.ok(entry && entry.type === 'extracted');
+  assert.equal(entry.height, 900);
+  assert.equal(entry.position, 0);
+  // Keys the page never stated are absent rather than null or empty.
+  assert.ok(!('width' in entry));
+  assert.ok(!('mediaType' in entry));
+  assert.ok(!('title' in entry));
+});
+
+test('a candidate with a stated width carries it, one without omits it', async () => {
+  const built = createPipeline({
+    reader: readerWithPictures(TEXT, [
+      { url: 'https://cdn.example.com/a.jpg', source: 'og:image', alt: '', score: 1, width: 800 },
+      { url: 'https://cdn.example.com/b.jpg', source: 'gallery', alt: '', score: 0.6 },
+    ]),
+    llm: scriptLlm([SPECS_JSON]).llm,
+    imageProvider: imageProvider(),
+  });
+  const result = await built.process('x', { outputs: ['image'] });
+  const [first, second] = result.images ?? [];
+  assert.ok(first?.type === 'extracted' && first.selected);
+  assert.equal(first.width, 800);
+  assert.ok(second?.type === 'extracted');
+  assert.ok(!('width' in second));
+});
+
+test('a candidate the reader never scored is still listed', async () => {
+  // Custom readers written against the older shape may omit the score; the
+  // entry must still reach the caller rather than be dropped.
+  const built = createPipeline({
+    reader: readerWithPictures(TEXT, [
+      { url: 'https://cdn.example.com/a.jpg', source: 'gallery', alt: 'A' } as ImageCandidate,
+    ]),
+    llm: scriptLlm([SPECS_JSON]).llm,
+    imageProvider: imageProvider(),
+  });
+  const result = await built.process('x', { outputs: ['image'] });
+  const entry = result.images?.[0];
+  assert.ok(entry?.type === 'extracted');
+  assert.equal(entry.url, 'https://cdn.example.com/a.jpg');
+  assert.ok(!('score' in entry));
+});
+
+/* --- the prose call sees what the source stated about itself --- */
+
+test('a title and description the source stated are handed to the prose stage', async () => {
+  // og: tags never survive into the markdown, so without this the model writes
+  // an overview having never seen the page's own description.
+  const bodies: string[] = [];
+  const built = new DefaultPipeline({
+    reader: {
+      async read(): Promise<ReadResult> {
+        return {
+          text: '# Acme Kettle\n\nBoils fast.',
+          imageOnly: false,
+          kind: 'html',
+          title: 'Acme Kettle 1.5L',
+          description: 'A matte black stainless steel kettle, 1.5 litres.',
+        };
+      },
+    },
+    llm: {
+      async complete(request): Promise<LlmResponse> {
+        if (request.schemaName === 'specmine_prose') {
+          bodies.push(String(request.messages[1]?.content));
+          return {
+            content: JSON.stringify({ summary: 'An overview.' }),
+            usage: { inputTokens: 5, outputTokens: 2 },
+          };
+        }
+        return { content: SPECS_JSON };
+      },
+    },
+    validator: new JsonSpecValidator(),
+    classifier: classifier(productClassification()),
+    imageProvider: imageProvider(),
+  });
+  const result = await built.process('x', { category: 'electronics' });
+  assert.match(bodies[0] ?? '', /The source states these about itself:/);
+  assert.match(bodies[0] ?? '', /Title: Acme Kettle 1\.5L/);
+  assert.match(bodies[0] ?? '', /Description: A matte black stainless steel kettle, 1\.5 litres\./);
+  // The stated values still win, and the body follows them.
+  assert.equal(result.title, 'Acme Kettle 1.5L');
+  assert.equal(result.description, 'A matte black stainless steel kettle, 1.5 litres.');
+  assert.equal(result.summary, 'An overview.');
+});
+
+test('a very long stated description is clipped, not pasted whole', async () => {
+  const bodies: string[] = [];
+  const built = new DefaultPipeline({
+    reader: {
+      async read(): Promise<ReadResult> {
+        return { text: 'body', imageOnly: false, description: 'D'.repeat(5000) };
+      },
+    },
+    llm: {
+      async complete(request): Promise<LlmResponse> {
+        if (request.schemaName === 'specmine_prose') {
+          bodies.push(String(request.messages[1]?.content));
+          return {
+            content: JSON.stringify({ title: 't', summary: 's' }),
+            usage: { inputTokens: 5, outputTokens: 2 },
+          };
+        }
+        return { content: SPECS_JSON };
+      },
+    },
+    validator: new JsonSpecValidator(),
+    classifier: classifier(productClassification()),
+    imageProvider: imageProvider(),
+  });
+  await built.process('x', { category: 'electronics' });
+  const body = bodies[0] ?? '';
+  assert.ok(body.includes('…'), 'a clipped value is marked as cut short');
+  assert.ok(body.length < 1000, `stated block should stay bounded, was ${body.length}`);
+});
+
+test('a source stating nothing sends no stated block at all', async () => {
+  const bodies: string[] = [];
+  const built = new DefaultPipeline({
+    reader: reader(TEXT),
+    llm: {
+      async complete(request): Promise<LlmResponse> {
+        if (request.schemaName === 'specmine_prose') {
+          bodies.push(String(request.messages[1]?.content));
+          return {
+            content: JSON.stringify({ title: 't', description: 'd', summary: 's' }),
+            usage: { inputTokens: 5, outputTokens: 2 },
+          };
+        }
+        return { content: SPECS_JSON };
+      },
+    },
+    validator: new JsonSpecValidator(),
+    classifier: classifier(productClassification()),
+    imageProvider: imageProvider(),
+  });
+  await built.process('x', { category: 'electronics' });
+  assert.doesNotMatch(bodies[0] ?? '', /states these about itself/);
+});
+
+test('a stated title alone is passed without inventing a description line', async () => {
+  const bodies: string[] = [];
+  const built = new DefaultPipeline({
+    reader: {
+      async read(): Promise<ReadResult> {
+        return { text: TEXT, imageOnly: false, title: 'Only A Title' };
+      },
+    },
+    llm: {
+      async complete(request): Promise<LlmResponse> {
+        if (request.schemaName === 'specmine_prose') {
+          bodies.push(String(request.messages[1]?.content));
+          return {
+            content: JSON.stringify({ description: 'Written', summary: 's' }),
+            usage: { inputTokens: 5, outputTokens: 2 },
+          };
+        }
+        return { content: SPECS_JSON };
+      },
+    },
+    validator: new JsonSpecValidator(),
+    classifier: classifier(productClassification()),
+    imageProvider: imageProvider(),
+  });
+  await built.process('x', { category: 'electronics' });
+  const body = bodies[0] ?? '';
+  assert.match(body, /Title: Only A Title/);
+  assert.doesNotMatch(body, /Description:/);
 });
