@@ -2,22 +2,19 @@ import 'dotenv/config';
 import { analyze, isVideoUrl } from '../src/index.js';
 
 // A video page carries no readable prose, so the reader never scrapes HTML for
-// it: it asks oEmbed for title/description/author and renders them as text.
-// YouTube/Vimeo links are detected before any fetch, so pass the URL straight in.
+// it: YouTube is read through youtubei.js (falling back to oEmbed), Vimeo
+// through oEmbed. Either way the metadata becomes labelled text.
+// Video links are detected before any fetch, so pass the URL straight in.
 const url = new URL('https://www.youtube.com/watch?v=D9p6GnDe4aI');
 console.log('video url?', isVideoUrl(url));
 
 const result = await analyze(url, {
   outputs: ['spec', 'image'],
+  // A video's own thumbnail is reused, so sequential avoids a wasted draw.
   mode: 'sequential',
+  // Anything Innertube.create accepts, e.g. { lang: 'de', location: 'DE' }.
+  videoSession: { lang: 'en', location: 'US' },
 });
 
-console.log(result.category);
-
-// The one picture a video page truly has is its own thumbnail, so the picture
-// decision normally lands on 'reused' and no image is generated. 'generated'
-// here would mean YouTube returned no thumbnail at all.
-console.log(result.picture);
-console.log(JSON.stringify(result.spec, null, 2));
-
-console.log(result.cost?.calls);
+// console.log truncates at depth 2 and would print the candidates as [Object].
+console.log(JSON.stringify(result, null, 2));
