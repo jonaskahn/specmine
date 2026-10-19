@@ -7,7 +7,7 @@ import { ExtractionError } from '../errors.js';
 import { logger } from '../log.js';
 import type { ExtractInput } from '../types.js';
 import { htmlToMarkdown } from './html.js';
-import { extractImageCandidates } from '../media/candidates.js';
+import { extractImageCandidates, extractPageMeta } from '../media/candidates.js';
 import type { ImageCandidate } from '../media/candidates.js';
 import type { PdfInspector } from './pdf.js';
 import { pickUserAgent } from './user-agent.js';
@@ -26,6 +26,11 @@ export interface ReadResult {
   /** the page's own pictures, when the source markup offered any. Optional so
    *  custom readers written against the older shape keep working. */
   candidates?: ImageCandidate[];
+  /** the title the source states for itself, when it states one. Free, and
+   *  always preferred over a generated title. */
+  title?: string;
+  /** the description the source states for itself, when it states one. */
+  description?: string;
 }
 
 export interface InputReader {
@@ -39,7 +44,15 @@ export interface InputReader {
 function fromMarkdown(raw: string, baseUrl: string | undefined): ReadResult {
   const text = htmlToMarkdown(raw);
   const candidates = extractImageCandidates(raw, baseUrl);
-  return { text, imageOnly: false, kind: candidates.length > 0 ? 'html' : 'text', candidates };
+  const meta = extractPageMeta(raw);
+  return {
+    text,
+    imageOnly: false,
+    kind: candidates.length > 0 ? 'html' : 'text',
+    candidates,
+    ...(meta.title !== undefined ? { title: meta.title } : {}),
+    ...(meta.description !== undefined ? { description: meta.description } : {}),
+  };
 }
 
 export class DefaultReader implements InputReader {
@@ -47,6 +60,8 @@ export class DefaultReader implements InputReader {
     private readonly pdfInspector?: PdfInspector,
     /** youtubei.js session options; see https://ytjs.dev/guide/getting-started.html */
     private readonly videoSession?: VideoSessionOptions,
+    /** how long a caption fetch may take before the read settles for metadata alone */
+    private readonly videoTranscriptMs?: number,
   ) {}
 
   async read(input: ExtractInput): Promise<ReadResult> {
@@ -64,13 +79,20 @@ export class DefaultReader implements InputReader {
       return this.readBlob(new Blob([await readFile(fileURLToPath(url))]));
     }
     if (isVideoUrl(url)) {
-      const metadata = await readVideoMetadata(url, this.videoSession);
+      const metadata = await readVideoMetadata(
+        url,
+        this.videoSession,
+        undefined,
+        this.videoTranscriptMs,
+      );
       const text = videoToText(metadata);
       return {
         text,
         imageOnly: false,
         kind: 'video',
         candidates: thumbnailCandidate(metadata.thumbnail),
+        title: metadata.title,
+        description: metadata.description,
       };
     }
     if (url.protocol === 'http:' || url.protocol === 'https:') {

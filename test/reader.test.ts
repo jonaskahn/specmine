@@ -235,3 +235,22 @@ test('plain markup with no picture is labelled text', async () => {
   assert.equal(result.kind, 'text');
   assert.deepEqual(result.candidates, []);
 });
+
+/* --- the source's own title and description travel with the read --- */
+
+test('html input reports the title and description it states', async () => {
+  const result = await new DefaultReader().read(
+    `<html><head>
+      <meta property="og:title" content="Acme Kettle">
+      <meta property="og:description" content="A 1.5 L kettle."></head>
+      <body><img src="https://cdn.example.com/a.jpg"></body></html>`,
+  );
+  assert.equal(result.title, 'Acme Kettle');
+  assert.equal(result.description, 'A 1.5 L kettle.');
+});
+
+test('plain text states neither, leaving them to be written', async () => {
+  const result = await new DefaultReader().read('Acme Kettle, matte black, 1.5 L.');
+  assert.equal(result.title, undefined);
+  assert.equal(result.description, undefined);
+});
