@@ -73,6 +73,23 @@ function metaContent(html: string, property: string): string | undefined {
   return pattern.exec(html)?.[1] ?? reverse.exec(html)?.[1];
 }
 
+/**
+ * What makes two references the same picture. Compared as the "main link" —
+ * host without `www.`, and path without the query or fragment — because a page
+ * routinely references one asset several ways: a CDN that resizes via `?w=800`,
+ * a `#hero` anchor, or the same file served from `www.`. Those are one image,
+ * and listing it three times tells the caller nothing.
+ *
+ * The path keeps its case, since a path can legitimately be case-sensitive.
+ */
+function imageKey(url: string): string {
+  // Even a non-url ("alt:…") parses, so there is no failure to handle here —
+  // it simply yields an empty host and its own text as the path.
+  const parsed = new URL(url);
+  const host = parsed.hostname.replace(/^www\./i, '');
+  return `${host}${parsed.pathname}`;
+}
+
 function absolutize(src: string, base: string | undefined): string | undefined {
   if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:'))
     return src;
@@ -114,8 +131,13 @@ function push(
 ): void {
   if (!raw) return;
   const url = absolutize(raw, base);
-  if (!isUsable(url) || seen.has(url)) return;
-  seen.add(url);
+  if (!isUsable(url)) return;
+  // One picture per main link, so a resized or anchored copy of the same asset
+  // does not fill the list twice. The first reference wins, which is why the
+  // rule order above matters.
+  const key = imageKey(url);
+  if (seen.has(key)) return;
+  seen.add(key);
   // An explicit attribute always wins; a query-string hint is a weaker fallback.
   const width = detail.width ?? toInt(WIDTH_HINT.exec(url)?.[1]);
   const height = detail.height ?? toInt(HEIGHT_HINT.exec(url)?.[1]);
@@ -167,7 +189,9 @@ export function extractImageCandidates(html: string, baseUrl?: string): ImageCan
     const alt = /\balt=["']([^"']{4,})["']/i.exec(html)?.[1];
     if (alt) {
       logger().debug('No reusable image url, falling back to alt text');
-      seen.add(`alt:${alt}`);
+      // The same identity check as a real url, so a non-url candidate is
+      // namespaced rather than colliding with one.
+      seen.add(imageKey(`alt:${alt}`));
       out.push({
         url: `alt:${alt}`,
         source: 'alt',
@@ -179,6 +203,48 @@ export function extractImageCandidates(html: string, baseUrl?: string): ImageCan
   }
   out.sort((a, b) => b.score - a.score || a.position - b.position);
   return out;
+}
+
+const TAG_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+};
+
+/** Entity-decodes the handful of escapes a title or meta tag realistically carries. */
+function decode(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const text = raw
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&(\w+);/g, (whole, name: string) => TAG_ENTITIES[name] ?? whole)
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > 0 ? text : undefined;
+}
+
+/**
+ * The page's own words about itself, read from the markup. This is what the
+ * source already states, so it costs nothing and is always preferred over a
+ * generated title or description. Open Graph first because that is what a page
+ * publishes for this purpose, then Twitter's mirror, then the standard meta.
+ * A `<title>` stands in for a missing title only — it is not a description.
+ */
+export function extractPageMeta(html: string): { title?: string; description?: string } {
+  const tag = decode(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]);
+  const title =
+    decode(metaContent(html, 'og:title')) ?? decode(metaContent(html, 'twitter:title')) ?? tag;
+  const description =
+    decode(metaContent(html, 'og:description')) ??
+    decode(metaContent(html, 'twitter:description')) ??
+    decode(metaContent(html, 'description'));
+  return {
+    ...(title !== undefined ? { title } : {}),
+    ...(description !== undefined ? { description } : {}),
+  };
 }
 
 /** Stage 2 of the decision (reuse): the best candidate, if any is usable. */
