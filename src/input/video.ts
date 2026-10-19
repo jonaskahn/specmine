@@ -209,6 +209,11 @@ function formatDuration(seconds: number): string {
   return hours > 0 ? `${hours}:${pad(mins)}:${pad(secs)}` : `${mins}:${pad(secs)}`;
 }
 
+/** YouTube states a full ISO timestamp; the date is the human-readable part. */
+function toDateOnly(value: string): string {
+  return /^\d{4}-\d{2}-\d{2}T/.test(value) ? value.slice(0, 10) : value;
+}
+
 /**
  * Render metadata as the text the classifier reads. Facts are labelled so they
  * land as spec values; the thumbnail url is deliberately left out, since a bare
@@ -222,7 +227,7 @@ export function videoToText(metadata: VideoMetadata): string {
   } else if (metadata.duration > 0) {
     lines.push(`Duration: ${formatDuration(metadata.duration)}`);
   }
-  if (metadata.publishedAt) lines.push(`Published: ${metadata.publishedAt}`);
+  if (metadata.publishedAt) lines.push(`Published: ${toDateOnly(metadata.publishedAt)}`);
   if (metadata.viewCount > 0) lines.push(`Views: ${metadata.viewCount}`);
   if (metadata.category) lines.push(`Category: ${metadata.category}`);
   if (metadata.description) lines.push('', '## Description', '', metadata.description);

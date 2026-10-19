@@ -237,7 +237,9 @@ export class DefaultPipeline {
     const specMode = options?.tags === true ? 'specs-and-tags' : 'specs';
 
     const runSpec = async (): Promise<{ spec: SpecsResult; tags: TagsResult }> =>
-      metered.withStage('spec', () => extractor.extractFromText(text, options, specMode, profile));
+      metered.withStage('spec', () =>
+        extractor.extractFromText(text, options, specMode, profile, readResult.kind),
+      );
 
     const dynamicFacts = async () => {
       const visual = new VisualExtractor(metered);

@@ -34,6 +34,22 @@ const GROUNDING_BLOCK = `Grounding:
 - Every value must be traceable to text actually present in the content.
 - If a value isn't explicitly stated, omit that key entirely rather than guess, estimate or infer it. Returning fewer keys on sparse content is correct, not a failure.`;
 
+/**
+ * A video page has no product to isolate: the source is channel, duration,
+ * views, publish date, category, keywords and a description written by the
+ * uploader. Asking for "the single product" there yields an empty object, so
+ * the video path extracts the video's own stated facts instead.
+ */
+const VIDEO_FACTS_TASK =
+  'Task: extract the factual attributes this content explicitly states — for a video: its title, channel, duration, views, publish date and category, plus any product, place, company or event the description names concretely with its stated attributes. Never infer, assume or fabricate.';
+
+const VIDEO_FACTS_BLOCK = `This content is a video's metadata and description, not a product page.
+- The labelled leading lines (Channel, Duration, Views, Published, Category, Keywords) are the video's own stated facts: extract each one whose value is non-empty, under a key describing what it is.
+- Then read the description for concrete things it names — a product with stated attributes, a location, a company, a dated event — and extract only their explicitly stated attributes.
+- The title names the video; it is context, never a key.
+- Narrative, opinion and calls to action are not facts.
+- Keywords are a comma list: when you do include them, keep the list intact as one value, never split into one key per keyword.`;
+
 const SPEC_OUTPUT_SHAPE = `Output shape — a single flat-or-nested JSON object, no wrapper key:
 {"<attribute label exactly as in source>": "<value>", "<group label exactly as in source>": {"<sub-attribute label exactly as in source>": "<value>"}}
 A missing or unstated attribute means its key is absent from the object entirely — never include one with a null or empty value.`;
@@ -166,8 +182,31 @@ export function buildSystemPrompt(
   lang: string,
   mode: PromptMode,
   profile?: ResolvedProfile,
+  /** the source is a video's metadata, not a product page */
+  video = false,
 ): string {
   const dateLine = currentDateLine();
+  if (video) {
+    const parts =
+      mode === 'tags-only'
+        ? [
+            ROLE_LINE,
+            VIDEO_FACTS_TASK,
+            VIDEO_FACTS_BLOCK,
+            TAG_FORMAT_BLOCK,
+            OUTPUT_DISCIPLINE_BLOCK,
+          ]
+        : [
+            ROLE_LINE,
+            VIDEO_FACTS_TASK,
+            VIDEO_FACTS_BLOCK,
+            KEY_DISCIPLINE_BLOCK,
+            SPEC_OUTPUT_SHAPE,
+            GROUNDING_BLOCK,
+            OUTPUT_DISCIPLINE_BLOCK,
+          ];
+    return [...parts, dateLine].join('\n\n');
+  }
   if (!profile) {
     const prompt = SYSTEM_PROMPTS[mode];
     if (lang === 'en') return `${prompt}\n\n${dateLine}`;

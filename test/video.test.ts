@@ -319,3 +319,18 @@ test('a widthless thumbnail is ranked below a sized one either way round', () =>
     );
   }
 });
+
+test('a full ISO publish timestamp is reduced to its date', () => {
+  const text = videoToText({
+    ...EMPTY_VIDEO_METADATA,
+    title: 'T',
+    publishedAt: '2026-10-18T11:07:57-07:00',
+  });
+  assert.match(text, /Published: 2026-10-18/);
+  assert.doesNotMatch(text, /T11:07:57/);
+});
+
+test('a non-ISO publish value is left as stated', () => {
+  const text = videoToText({ ...EMPTY_VIDEO_METADATA, title: 'T', publishedAt: 'October 2026' });
+  assert.match(text, /Published: October 2026/);
+});

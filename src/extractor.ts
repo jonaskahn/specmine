@@ -1,6 +1,6 @@
 import { ExtractionError } from './errors.js';
 import { detectLanguage } from './input/language.js';
-import { DefaultReader, type InputReader } from './input/reader.js';
+import { DefaultReader, type InputKind, type InputReader } from './input/reader.js';
 import { NapiPdfInspector } from './input/napi-pdf-inspector.js';
 import { createAnthropicProvider } from './llm/anthropic.js';
 import { createOpenAiProvider } from './llm/openai.js';
@@ -144,8 +144,9 @@ export class DefaultExtractor implements Extractor {
     options?: ExtractOptions,
     mode: PromptMode = 'specs',
     profile?: ResolvedProfile,
+    kind?: InputKind,
   ): Promise<{ spec: SpecsResult; tags: TagsResult }> {
-    return this.runOnText(text, options, mode, profile);
+    return this.runOnText(text, options, mode, profile, kind);
   }
 
   private async run(
@@ -164,7 +165,7 @@ export class DefaultExtractor implements Extractor {
     if (!text) {
       throw new ExtractionError('EMPTY_INPUT', 'Input is empty');
     }
-    return this.runOnText(text, options, mode, profile);
+    return this.runOnText(text, options, mode, profile, readResult.kind);
   }
 
   private async runOnText(
@@ -172,6 +173,7 @@ export class DefaultExtractor implements Extractor {
     options?: ExtractOptions,
     mode: PromptMode = 'specs',
     profile?: ResolvedProfile,
+    kind?: InputKind,
   ): Promise<{ spec: SpecsResult; tags: TagsResult }> {
     const log = logger();
     const text = rawText.trim();
@@ -181,7 +183,7 @@ export class DefaultExtractor implements Extractor {
     const lang = options?.lang ?? detectLanguage(text) ?? 'en';
     log.info('Extraction started', { mode, lang, chars: text.length });
     const messages: LlmMessage[] = [
-      { role: 'system', content: buildSystemPrompt(lang, mode, profile) },
+      { role: 'system', content: buildSystemPrompt(lang, mode, profile, kind === 'video') },
       { role: 'user', content: text },
     ];
     const request: LlmRequest = {
