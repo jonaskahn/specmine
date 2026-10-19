@@ -62,6 +62,8 @@ export function estimateCost(summary: CostSummary): number {
       byStage('classify', 'outputTokens') +
       byStage('spec', 'inputTokens') +
       byStage('spec', 'outputTokens') +
+      byStage('summary', 'inputTokens') +
+      byStage('summary', 'outputTokens') +
       byStage('image', 'inputTokens') +
       byStage('image', 'outputTokens')) *
       BLENDED_RATE_PER_MTOK.llm) /
