@@ -214,7 +214,9 @@ const result = await analyze('The Acme Kettle holds 1.5L, matte black steel.', {
   mode: 'parallel', // or 'sequential': extract spec first, render image from it
 });
 // { category: { kind, domain, family, archetype, confidence },
-//   spec: { ... }, image: { blob, mimeType, base64, dataUrl } }
+//   spec: { ... }, image: { blob, mimeType, base64, dataUrl },
+//   images: [ { type: 'extracted'|'generated'|'blocked'|'none',
+//               selected: true, ... } ] }
 
 // Image only — the prompt is built internally, the result is the image itself
 const image = await generateImage(htmlOrPdf, { category: 'electronics' });
@@ -237,49 +239,50 @@ Skip the classifier with `category` (e.g. `electronics`, `apparel_footwear`,
 `real_estate`); use `mode: 'sequential'` to render from the extracted spec
 instead of a separate visual pass.
 
-### Picture decision
+### Images
 
-The pipeline decides where the picture comes from, and always says what it
-decided in `result.picture.outcome`:
+`result.images` lists every picture the input offered, best-scoring first, and
+carries the decision too. Each entry says what it is via `type`, and exactly one
+entry is marked `selected`:
 
-| Outcome     | Meaning                                                                                   |
-| ----------- | ----------------------------------------------------------------------------------------- |
-| `reused`    | The page already had a usable photo; nothing was generated. `source` and `url` say which. |
-| `generated` | The page had no photo, so one was drawn from the extracted facts.                         |
-| `blocked`   | There was something to depict, but the draw was refused or failed.                        |
-| `none`      | The category never takes a picture, so none was attempted.                                |
+| `type`      | Meaning                                                                      |
+| ----------- | ---------------------------------------------------------------------------- |
+| `extracted` | A picture the source already carried. `source`, `url` and `alt` say which.   |
+| `generated` | The source had none, so one was drawn. The image itself is on `entry.image`. |
+| `blocked`   | There was something to depict, but the draw was refused or failed.           |
+| `none`      | The category never takes a picture, so none was attempted.                   |
 
-Reuse comes from the page's own markup — `og:image`, `twitter:image`, gallery
-images, then alt text — never from a generated image. A page that already
-carries a good photo costs nothing and is more faithful than a render.
-
-```ts
-const result = await analyze(htmlPage, { outputs: ['image'] });
-result.picture;
-// { outcome: 'reused', source: 'og:image', url: 'https://cdn.example.com/hero.jpg', alt: 'the kettle' }
-```
-
-### Every image the page offers
-
-`result.images` returns the full candidate list, not just the winner, so you can
-pick a different image than the pipeline did without re-reading the page. Each
-entry carries `url`, `source`, `alt`, `score`, `position` (document order), and
-whichever of `width`, `height`, `type` and `title` the markup stated — keys are
-absent rather than empty when the page said nothing.
-
-`picture` is the decision; `images` is the evidence behind it.
+Reuse comes from the source's own markup — `og:image`, `twitter:image`, gallery
+images, then alt text — never from a generated image. A source that already
+carries a good photo costs nothing and is more faithful than a render. When a
+candidate is reused, no image provider is called at all.
 
 ```ts
 const result = await analyze(htmlPage, { outputs: ['image'] });
-result.images?.[0];
-// {
-//   url: 'https://cdn.example.com/hero.jpg',
-//   source: 'og:image', alt: '', score: 1, position: 0,
-//   width: 1600, height: 900, type: 'image/webp', title: 'The kettle',
-// }
+result.images;
+// [
+//   {
+//     type: 'extracted', selected: true,
+//     url: 'https://cdn.example.com/hero.jpg', source: 'og:image',
+//     alt: 'the kettle', score: 1, position: 0,
+//     width: 1600, height: 900, mediaType: 'image/webp', title: 'The kettle',
+//   },
+//   { type: 'extracted', selected: false,
+//     url: 'https://cdn.example.com/a.jpg', source: 'gallery', alt: 'A', score: 0.6 },
+// ]
 ```
 
-When `reuse` wins, no image provider is called at all.
+Because the list is the evidence too, you can pick a different image than the
+pipeline did without re-reading the source. Optional keys (`width`, `height`,
+`mediaType`, `title`, `position`) are absent rather than empty when the markup
+said nothing; `score` is absent only when a custom reader supplied none.
+
+`images` is `[]` when no image was requested. A run that asked for one but ended
+with none still reports it, so the first entry always says what happened:
+
+```ts
+result.images; // [{ type: 'blocked', selected: true }]
+```
 
 ### Cost
 
