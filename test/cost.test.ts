@@ -83,3 +83,43 @@ test('llm stages are priced at the blended rate', () => {
 test('an empty run costs nothing', () => {
   assert.equal(estimateCost(emptySummary()), 0);
 });
+
+test('overlapping stages each bill their own label', async () => {
+  const cost = emptySummary();
+  // The slow stage starts first and is still running when the second begins;
+  // a single mutable field would bill both calls to whichever set it last.
+  const slow: LlmProvider = {
+    complete: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return { content: '{}', usage: { inputTokens: 10, outputTokens: 1 } };
+    },
+  };
+  const metered = new MeteredProvider(slow, cost);
+  await Promise.all([
+    metered.withStage('spec', () => metered.complete({ messages: [] })),
+    metered.withStage('image', () => metered.complete({ messages: [] })),
+  ]);
+  const stages = cost.calls.map((call) => call.stage).sort();
+  assert.deepEqual(stages, ['image', 'spec']);
+});
+
+test('a nested stage bills to the innermost label it runs under', async () => {
+  const cost = emptySummary();
+  const metered = new MeteredProvider(
+    provider({ content: '{}', usage: { inputTokens: 1, outputTokens: 1 } }),
+    cost,
+  );
+  await metered.withStage('spec', async () => {
+    await metered.withStage('summary', () => metered.complete({ messages: [] }));
+  });
+  assert.deepEqual(
+    cost.calls.map((call) => call.stage),
+    ['summary'],
+  );
+});
+
+test('the summary stage is priced at the llm rate', () => {
+  const cost = emptySummary();
+  recordUsage(cost, { stage: 'summary', model: 'm', inputTokens: 1000, outputTokens: 1000 });
+  assert.equal(estimateCost(cost), 0.00346);
+});
