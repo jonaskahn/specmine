@@ -8,6 +8,7 @@ import type {
   LlmProviderOptions,
   LlmRequest,
   LlmResponse,
+  LlmUsage,
 } from './provider.js';
 import { resolveSettings, type ResolvedSettings } from './settings.js';
 import { SPECS_SCHEMA, TAGGED_SPECS_SCHEMA, TAGS_ONLY_SCHEMA } from '../spec/schema.js';
@@ -29,6 +30,23 @@ interface AnthropicMessage {
 
 interface AnthropicResponse {
   content?: Array<{ type?: string; text?: string; input?: unknown }>;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+  };
+}
+
+/** Usage is passed through only when the provider actually reported it. */
+function toUsage(usage: AnthropicResponse['usage']): { usage?: LlmUsage } {
+  const inputTokens = usage?.input_tokens;
+  const outputTokens = usage?.output_tokens;
+  if (inputTokens === undefined && outputTokens === undefined) return {};
+  return {
+    usage: {
+      ...(inputTokens !== undefined ? { inputTokens } : {}),
+      ...(outputTokens !== undefined ? { outputTokens } : {}),
+    },
+  };
 }
 
 function resolve(options: AnthropicOptions | undefined): ResolvedSettings {
@@ -81,6 +99,10 @@ export class AnthropicClient implements LlmProvider {
     this.version = options?.anthropicVersion ?? DEFAULT_ANTHROPIC_VERSION;
   }
 
+  model(request: LlmRequest): string {
+    return request.model ?? this.settings.model;
+  }
+
   async complete(request: LlmRequest, options?: CallOptions): Promise<LlmResponse> {
     const { apiHost, apiKey, model } = this.settings;
     const system = toSystem(request.messages);
@@ -130,13 +152,13 @@ export class AnthropicClient implements LlmProvider {
     debugBody('Anthropic LLM response body', response);
     const toolUse = response.content?.find((block) => block.type === 'tool_use');
     if (toolUse?.input !== undefined) {
-      return { content: JSON.stringify(toolUse.input) };
+      return { content: JSON.stringify(toolUse.input), ...toUsage(response.usage) };
     }
     const content = response.content?.find((block) => block.type === 'text')?.text;
     if (typeof content !== 'string') {
       throw new ExtractionError('LLM_ERROR', 'LLM response is missing text content');
     }
-    return { content };
+    return { content, ...toUsage(response.usage) };
   }
 }
 

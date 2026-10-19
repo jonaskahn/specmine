@@ -51,4 +51,7 @@ export interface LlmProviderOptions {
 
 export interface LlmProvider {
   complete(request: LlmRequest, options?: CallOptions): Promise<LlmResponse>;
+  /** the model this provider will actually call. Lets a metered wrapper name
+   *  the model even when the request itself does not specify one. */
+  model?(request: LlmRequest): string | undefined;
 }

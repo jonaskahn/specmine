@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { OpenAiClient, createOpenAiProvider } from '../src/llm/openai.js';
 import { AnthropicClient, createAnthropicProvider } from '../src/llm/anthropic.js';
 import { ExtractionError } from '../src/errors.js';
+import { createResilientProvider } from '../src/llm/resilience.js';
+import type { LlmProvider } from '../src/llm/provider.js';
 
 function mockFetch(body: unknown, status = 200): { url: string; init: RequestInit } {
   const captured: { url: string; init: RequestInit } = { url: '', init: {} };
@@ -299,4 +301,121 @@ test('openai omits authorization header without an api key', async () => {
   await client.complete({ messages: [] });
   const headers = captured.init.headers as Record<string, string>;
   assert.equal(headers.authorization, undefined);
+});
+
+test('openai forwards reported usage and names its model', async () => {
+  mockFetch({
+    choices: [{ message: { content: '{"ok":"1"}' } }],
+    usage: { prompt_tokens: 1234, completion_tokens: 56 },
+  });
+  const client = new OpenAiClient({ apiKey: 'k', model: 'gpt-5.6-luna' });
+  const response = await client.complete({ messages: [{ role: 'user', content: 'hi' }] });
+  assert.deepEqual(response.usage, { inputTokens: 1234, outputTokens: 56 });
+  assert.equal(client.model({ messages: [] }), 'gpt-5.6-luna');
+});
+
+test('openai omits usage entirely when the response carries none', async () => {
+  mockFetch({ choices: [{ message: { content: '{"ok":"1"}' } }] });
+  const client = new OpenAiClient({ apiKey: 'k' });
+  const response = await client.complete({ messages: [{ role: 'user', content: 'hi' }] });
+  assert.equal(response.usage, undefined);
+});
+
+test('anthropic forwards reported usage and names its model', async () => {
+  mockFetch({
+    content: [{ type: 'tool_use', input: { ok: '1' } }],
+    usage: { input_tokens: 900, output_tokens: 12 },
+  });
+  const client = new AnthropicClient({ apiKey: 'k', model: 'claude-opus-5-5' });
+  const response = await client.complete({ messages: [{ role: 'user', content: 'hi' }] });
+  assert.deepEqual(response.usage, { inputTokens: 900, outputTokens: 12 });
+  assert.equal(client.model({ messages: [] }), 'claude-opus-5-5');
+});
+
+test('anthropic forwards usage on the text path too', async () => {
+  mockFetch({
+    content: [{ type: 'text', text: 'plain' }],
+    usage: { input_tokens: 7, output_tokens: 3 },
+  });
+  const client = new AnthropicClient({ apiKey: 'k' });
+  const response = await client.complete({ messages: [{ role: 'user', content: 'hi' }] });
+  assert.deepEqual(response.usage, { inputTokens: 7, outputTokens: 3 });
+});
+
+test('openai reports only the token side the provider sent', async () => {
+  mockFetch({
+    choices: [{ message: { content: '{"ok":"1"}' } }],
+    usage: { completion_tokens: 5 },
+  });
+  const client = new OpenAiClient({ apiKey: 'k' });
+  const response = await client.complete({ messages: [{ role: 'user', content: 'hi' }] });
+  assert.deepEqual(response.usage, { outputTokens: 5 });
+});
+
+test('anthropic reports only the token side the provider sent', async () => {
+  mockFetch({
+    content: [{ type: 'text', text: 'plain' }],
+    usage: { input_tokens: 5 },
+  });
+  const client = new AnthropicClient({ apiKey: 'k' });
+  const response = await client.complete({ messages: [{ role: 'user', content: 'hi' }] });
+  assert.deepEqual(response.usage, { inputTokens: 5 });
+});
+
+test('a resilient provider passes its model through', async () => {
+  const inner: LlmProvider = {
+    complete: async () => ({ content: '{}' }),
+    model: () => 'gpt-5.6-luna',
+  };
+  assert.equal(createResilientProvider(inner).model?.({ messages: [] }), 'gpt-5.6-luna');
+});
+
+test('a response with no usage object at all is handled', async () => {
+  mockFetch({ choices: [{ message: { content: '{"ok":"1"}' } }] });
+  const openAi = await new OpenAiClient({ apiKey: 'k' }).complete({
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.equal(openAi.usage, undefined);
+
+  mockFetch({ content: [{ type: 'text', text: 'plain' }] });
+  const anthropic = await new AnthropicClient({ apiKey: 'k' }).complete({
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.equal(anthropic.usage, undefined);
+});
+
+test('an empty usage object counts as no usage', async () => {
+  mockFetch({ choices: [{ message: { content: '{"ok":"1"}' } }], usage: {} });
+  const openAi = await new OpenAiClient({ apiKey: 'k' }).complete({
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.equal(openAi.usage, undefined);
+
+  mockFetch({ content: [{ type: 'text', text: 'plain' }], usage: {} });
+  const anthropic = await new AnthropicClient({ apiKey: 'k' }).complete({
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.equal(anthropic.usage, undefined);
+});
+
+test('each provider reports a lone input count without an output count', async () => {
+  mockFetch({
+    choices: [{ message: { content: '{"ok":"1"}' } }],
+    usage: { prompt_tokens: 42 },
+  });
+  const openAi = await new OpenAiClient({ apiKey: 'k' }).complete({
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.deepEqual(openAi.usage, { inputTokens: 42 });
+});
+
+test('anthropic reports a lone output count without an input count', async () => {
+  mockFetch({
+    content: [{ type: 'text', text: 'plain' }],
+    usage: { output_tokens: 8 },
+  });
+  const anthropic = await new AnthropicClient({ apiKey: 'k' }).complete({
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.deepEqual(anthropic.usage, { outputTokens: 8 });
 });

@@ -1,15 +1,18 @@
 import { logger } from '../log.js';
 
 /**
- * Token accounting for a run. Every LLM call records what the provider
- * reported; nothing is estimated, so a missing usage field stays missing
- * rather than inventing a number on the bill.
+ * Token accounting for a run. A provider-reported figure is recorded as given;
+ * only identify infers one, and it is flagged so a reader can tell an estimate
+ * from a measurement.
  */
 export interface UsageEntry {
   stage: string;
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** tokens were inferred from payload size, not reported by the provider.
+   *  Only identify does this — its endpoint returns no usage. */
+  estimated?: boolean;
 }
 
 export interface CostSummary {
@@ -17,12 +20,14 @@ export interface CostSummary {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  /** true when any call's tokens were inferred rather than reported */
+  estimated: boolean;
 }
 
 export const BLENDED_RATE_PER_MTOK = { jev: 0.042, llm: 1.73 } as const;
 
 export function emptySummary(): CostSummary {
-  return { calls: [], inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  return { calls: [], inputTokens: 0, outputTokens: 0, totalTokens: 0, estimated: false };
 }
 
 function isPriced(stage: string): boolean {
@@ -42,6 +47,7 @@ export function recordUsage(
   summary.inputTokens += inputTokens;
   summary.outputTokens += outputTokens;
   summary.totalTokens += inputTokens + outputTokens;
+  if (entry.estimated === true) summary.estimated = true;
 }
 
 /** Dollars for the summary, at the spec's blended rates. Jev output is free. */
@@ -70,6 +76,7 @@ export function logCostSummary(summary: CostSummary): void {
     outputTokens: summary.outputTokens,
     totalTokens: summary.totalTokens,
     usd: estimateCost(summary),
+    estimated: summary.estimated,
     pricedStages: summary.calls.filter((call) => isPriced(call.stage)).length,
   });
 }

@@ -8,6 +8,22 @@ function provider(response: LlmResponse): LlmProvider {
   return { complete: async () => response };
 }
 
+function namedProvider(response: LlmResponse, model: string): LlmProvider {
+  return { complete: async () => response, model: () => model };
+}
+
+test('the model is named from the provider when the request does not', async () => {
+  const cost = emptySummary();
+  const metered = new MeteredProvider(
+    namedProvider({ content: '{}', usage: { inputTokens: 100, outputTokens: 20 } }, 'gpt-5.6-luna'),
+    cost,
+  );
+  await metered.complete({ messages: [], model: 'm' });
+  assert.equal(cost.calls[0]?.model, 'm');
+  await metered.complete({ messages: [] });
+  assert.equal(cost.calls[1]?.model, 'gpt-5.6-luna');
+});
+
 test('usage from the provider lands in the summary', async () => {
   const cost = emptySummary();
   const metered = new MeteredProvider(

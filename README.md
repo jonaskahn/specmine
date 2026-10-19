@@ -287,15 +287,40 @@ Every run reports what it spent:
 
 ```ts
 const result = await analyze('...', { outputs: ['spec'] });
-result.cost;
-// { calls: [{ stage: 'identify', model: 'jev-latest', inputTokens: 2000, outputTokens: 0 }],
-//   inputTokens: 2000, outputTokens: 0, totalTokens: 2000 }
+JSON.stringify(result.cost, null, 2);
 ```
 
-Tokens come from the provider's own usage report — nothing is estimated, so a
-provider that doesn't report usage records zero rather than a guess. `identify`
-is priced at the Jev rate and its output is free; spec and image calls use the
-blended LLM rate (`BLENDED_RATE_PER_MTOK`).
+```json
+{
+  "calls": [
+    {
+      "stage": "identify",
+      "model": "jev-latest",
+      "inputTokens": 41,
+      "outputTokens": 0,
+      "estimated": true
+    },
+    { "stage": "spec", "model": "gpt-5.6-luna", "inputTokens": 1180, "outputTokens": 96 }
+  ],
+  "inputTokens": 1221,
+  "outputTokens": 96,
+  "totalTokens": 1317,
+  "estimated": true
+}
+```
+
+Token counts come from the provider's own usage report. The single exception is
+`identify`: Jev's endpoint returns no usage block, so its input size is inferred
+from the payload and flagged `estimated: true`, which also sets `cost.estimated`
+on the summary. A provider that reports no usage at all records zero rather than
+a guess.
+
+`identify` is priced at the Jev rate and its output is free; spec and image calls
+use the blended LLM rate (`BLENDED_RATE_PER_MTOK`). `estimateCost(result.cost)`
+returns the dollars.
+
+> `console.log` truncates at depth 2 and will print `calls: [Object]`. Use
+> `JSON.stringify`, or `console.dir(cost, { depth: null })` to keep the shape.
 
 ### Classification
 

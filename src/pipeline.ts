@@ -206,6 +206,8 @@ export class DefaultPipeline {
           stage: 'identify',
           model: 'jev-latest',
           inputTokens: Math.ceil(stateChars / 4),
+          // Jev's endpoint returns no usage block, so this one is inferred.
+          estimated: true,
         }),
     );
     const classification = await classifyInput(

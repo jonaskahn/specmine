@@ -83,6 +83,10 @@ export class ResilientProvider implements LlmProvider {
     this.settings = resolveSettings(options);
   }
 
+  model(request: LlmRequest): string | undefined {
+    return this.provider.model?.(request);
+  }
+
   async complete(request: LlmRequest, options?: CallOptions): Promise<LlmResponse> {
     this.assertClosed();
     const attempts = this.settings.maxRetries + 1;

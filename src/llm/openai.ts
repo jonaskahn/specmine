@@ -8,6 +8,7 @@ import type {
   LlmProviderOptions,
   LlmRequest,
   LlmResponse,
+  LlmUsage,
 } from './provider.js';
 import { resolveSettings, type ResolvedSettings } from './settings.js';
 import { SPECS_SCHEMA, TAGGED_SPECS_SCHEMA, TAGS_ONLY_SCHEMA } from '../spec/schema.js';
@@ -25,6 +26,10 @@ interface OpenAiChoice {
 
 interface OpenAiBody {
   choices?: OpenAiChoice[];
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+  };
 }
 
 function resolve(options: OpenAiCompatibleOptions | undefined): ResolvedSettings {
@@ -32,6 +37,19 @@ function resolve(options: OpenAiCompatibleOptions | undefined): ResolvedSettings
     host: DEFAULT_OPENAI_API_HOST,
     model: DEFAULT_OPENAI_MODEL,
   });
+}
+
+/** Usage is passed through only when the provider actually reported it. */
+function toUsage(usage: OpenAiBody['usage']): { usage?: LlmUsage } {
+  const inputTokens = usage?.prompt_tokens;
+  const outputTokens = usage?.completion_tokens;
+  if (inputTokens === undefined && outputTokens === undefined) return {};
+  return {
+    usage: {
+      ...(inputTokens !== undefined ? { inputTokens } : {}),
+      ...(outputTokens !== undefined ? { outputTokens } : {}),
+    },
+  };
 }
 
 function toContent(content: LlmMessage['content']): string {
@@ -52,6 +70,10 @@ export class OpenAiClient implements LlmProvider {
 
   constructor(options?: OpenAiCompatibleOptions) {
     this.settings = resolve(options);
+  }
+
+  model(request: LlmRequest): string {
+    return request.model ?? this.settings.model;
   }
 
   async complete(request: LlmRequest, options?: CallOptions): Promise<LlmResponse> {
@@ -104,7 +126,7 @@ export class OpenAiClient implements LlmProvider {
     if (typeof content !== 'string') {
       throw new ExtractionError('LLM_ERROR', 'LLM response is missing message content');
     }
-    return { content };
+    return { content, ...toUsage(openAiBody.usage) };
   }
 }
 

@@ -28,7 +28,9 @@ export class MeteredProvider implements LlmProvider {
     const response = await this.inner.complete(request, options);
     recordUsage(this.summary, {
       stage: this.stage,
-      model: request.model ?? 'unknown',
+      // The request rarely names a model; the provider's resolved setting is the
+      // truth about which one was billed.
+      model: request.model ?? this.inner.model?.(request) ?? 'unknown',
       ...(response.usage?.inputTokens !== undefined
         ? { inputTokens: response.usage.inputTokens }
         : {}),
