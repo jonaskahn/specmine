@@ -43,6 +43,9 @@ export interface ExtractOptions extends CallOptions {
   /** youtubei.js session options for video input — lang, location, cookie,
    *  client_type, and the rest. See https://ytjs.dev/guide/getting-started.html */
   videoSession?: Record<string, unknown>;
+  /** how long a video's caption fetch may take before falling back to
+   *  metadata-only. Default: 15_000 */
+  videoTranscriptMs?: number;
 }
 
 export type ExtractInput = string | Blob | URL;
@@ -89,6 +92,10 @@ export interface ProcessOptions extends ExtractOptions {
   classifier?: ClassifierConfig;
   image?: ImageOutputOptions;
   failFast?: boolean;
+  /** also return a short factual overview of the content. Default: true. A
+   *  source that states its own title and description still costs one call for
+   *  the overview unless this is false. */
+  summary?: boolean;
 }
 
 export interface CategoryInfo {
@@ -118,32 +125,78 @@ export interface GeneratedImage {
   revisedPrompt?: string;
 }
 
-/** How the picture decision ended: reuse the page's own, draw one, refuse, or have nothing. */
-export type PictureOutcome = 'reused' | 'generated' | 'blocked' | 'none';
+/**
+ * What each entry of `ProcessResult.images` is. `extracted` is a picture the
+ * source already carried, `generated` one we drew; `blocked` and `none` are the
+ * two ways no picture exists — the draw was refused or failed, or the category
+ * never takes one. They are entries rather than an empty array so a caller
+ * reading the first entry always learns what happened.
+ */
+export type ImageType = 'extracted' | 'generated' | 'blocked' | 'none';
 
-export interface PictureInfo {
-  outcome: PictureOutcome;
-  /** where a reused picture came from */
-  source?: ImageCandidate['source'];
-  url?: string;
-  alt?: string;
+export interface ExtractedImage {
+  type: 'extracted';
+  url: string;
+  /** where the source carried it: og:image, twitter:image, gallery, thumbnail, alt */
+  source: ImageCandidate['source'];
+  alt: string;
+  /** 0–1 plausibility, when there was more than one candidate to rank */
+  score?: number;
+  /** where it sat in the source: meta tags first, then images in document order */
+  position?: number;
+  width?: number;
+  height?: number;
+  /** the image mime type, when the markup or its extension stated one */
+  mediaType?: string;
+  /** the image's own title, when it had one */
+  title?: string;
+  /** true for exactly the entry the pipeline chose */
+  selected: boolean;
 }
+
+export interface GeneratedImageEntry {
+  type: 'generated';
+  image: GeneratedImage;
+  selected: true;
+}
+
+/** No picture exists, and this says why. */
+export interface AbsentImage {
+  type: 'blocked' | 'none';
+  selected: true;
+}
+
+export type ImageEntry = ExtractedImage | GeneratedImageEntry | AbsentImage;
 
 export interface ProcessErrors {
   spec?: import('./errors.js').ExtractionError;
   image?: import('./errors.js').ExtractionError;
+  summary?: import('./errors.js').ExtractionError;
 }
 
 export interface ProcessResult {
   category: CategoryInfo;
+  /** what this content is called. The source's own title when it stated one —
+   *  a video's title, a page's og:title or <title> — otherwise written from the
+   *  content, because a source that states no title would otherwise have none. */
+  title?: string;
+  /** the source's own description when it stated one; otherwise written from
+   *  the content on the same terms as `title`. */
+  description?: string;
+  /** two to four factual sentences on what the content is and what it states.
+   *  Omitted when `summary: false`. */
+  summary?: string;
   spec?: SpecsResult;
   tags?: TagsResult;
   image?: GeneratedImage;
-  /** the picture decision, always stated — including when nothing was made */
-  picture?: PictureInfo;
-  /** every image the input offered, best-scoring first. Present whenever the
-   *  source markup carried any; `picture` is the decision, this is the evidence. */
-  images?: ImageCandidate[];
+  /**
+   * Every picture the input offered, best-scoring first, each entry saying what
+   * it is and whether it was the one we chose. Holds the decision as well as
+   * the evidence: the chosen entry carries `selected`, and a run with no picture
+   * carries a single `blocked` or `none` entry explaining why. Empty when no
+   * image was requested, or when the input offered none and nothing was drawn.
+   */
+  images?: ImageEntry[];
   /** token usage and estimated dollars for this run */
   cost?: CostSummary;
   errors?: ProcessErrors;

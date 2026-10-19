@@ -337,15 +337,22 @@ test('a non-ISO publish value is left as stated', () => {
   assert.match(text, /Published: October 2026/);
 });
 
+/**
+ * Captions only come from `getInfo`, which is the one fetch that carries the
+ * transcript panel. `getBasicInfo` is stubbed alongside it because the reader
+ * always calls both, and the result of each is used to prove the fallback.
+ */
 function withTranscript(segments: unknown, ok = true): VideoInfoSource {
+  const info = {
+    basic_info: { title: 'T' },
+    getTranscript: async () => {
+      if (!ok) throw new Error('transcript endpoint 400');
+      return { transcript: { content: { body: { initial_segments: segments } } } };
+    },
+  };
   return {
-    getBasicInfo: async () => ({
-      basic_info: { title: 'T' },
-      getTranscript: async () => {
-        if (!ok) throw new Error('transcript endpoint 400');
-        return { transcript: { content: { body: { initial_segments: segments } } } };
-      },
-    }),
+    getBasicInfo: async () => info,
+    getInfo: async () => info,
   };
 }
 
@@ -417,7 +424,8 @@ test('a non-error transcript rejection is also handled', async () => {
     new URL('https://www.youtube.com/watch?v=D9p6GnDe4aI'),
     undefined,
     async () => ({
-      getBasicInfo: async () => ({
+      getBasicInfo: async () => ({ basic_info: { title: 'T' } }),
+      getInfo: async () => ({
         basic_info: { title: 'T' },
         getTranscript: async () => {
           throw 'plain string failure';
@@ -426,4 +434,201 @@ test('a non-error transcript rejection is also handled', async () => {
     }),
   );
   assert.equal(metadata.transcript, '');
+});
+
+/* --- getInfo / getBasicInfo run in parallel, captions best-effort --- */
+
+const YOUTUBE = new URL('https://www.youtube.com/watch?v=D9p6GnDe4aI');
+const CAPTION_INFO = {
+  basic_info: { title: 'Full', duration: 10 },
+  getTranscript: async () => ({
+    transcript: { content: { body: { initial_segments: [{ snippet: { text: 'said words' } }] } } },
+  }),
+};
+const BASIC_ONLY = { basic_info: { title: 'Basic', duration: 10 } };
+
+test('a source with no getInfo still reads, just without captions', async () => {
+  const metadata = await readVideoMetadata(YOUTUBE, undefined, async () => ({
+    getBasicInfo: async () => BASIC_ONLY,
+  }));
+  assert.equal(metadata.title, 'Basic');
+  assert.equal(metadata.transcript, '');
+});
+
+test('getInfo wins over getBasicInfo when both answer', async () => {
+  const metadata = await readVideoMetadata(YOUTUBE, undefined, async () => ({
+    getBasicInfo: async () => BASIC_ONLY,
+    getInfo: async () => CAPTION_INFO,
+  }));
+  assert.equal(metadata.title, 'Full');
+  assert.equal(metadata.transcript, 'said words');
+});
+
+test('both calls are in flight together, neither awaited before the other', async () => {
+  let inFlight = 0;
+  let peak = 0;
+  const info = async () => {
+    inFlight += 1;
+    peak = Math.max(peak, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    inFlight -= 1;
+    return CAPTION_INFO;
+  };
+  const metadata = await readVideoMetadata(YOUTUBE, undefined, async () => ({
+    getBasicInfo: info,
+    getInfo: info,
+  }));
+  // Sequential would peak at 1; racing the two is what makes captions cheap.
+  assert.equal(peak, 2);
+  assert.equal(metadata.transcript, 'said words');
+});
+
+test('a getInfo that never resolves falls back to getBasicInfo', async () => {
+  const metadata = await readVideoMetadata(
+    YOUTUBE,
+    undefined,
+    async () => ({
+      getBasicInfo: async () => BASIC_ONLY,
+      getInfo: () => new Promise(() => {}),
+    }),
+    25,
+  );
+  assert.equal(metadata.title, 'Basic');
+  assert.equal(metadata.transcript, '');
+});
+
+test('a getInfo rejection falls back to getBasicInfo', async () => {
+  const metadata = await readVideoMetadata(YOUTUBE, undefined, async () => ({
+    getBasicInfo: async () => BASIC_ONLY,
+    getInfo: async () => {
+      throw new Error('bot check');
+    },
+  }));
+  assert.equal(metadata.title, 'Basic');
+  assert.equal(metadata.transcript, '');
+});
+
+test('a failed getBasicInfo still lets a good getInfo through', async () => {
+  const metadata = await readVideoMetadata(YOUTUBE, undefined, async () => ({
+    getBasicInfo: async () => {
+      throw new Error('watch failed');
+    },
+    getInfo: async () => CAPTION_INFO,
+  }));
+  assert.equal(metadata.title, 'Full');
+  assert.equal(metadata.transcript, 'said words');
+});
+
+test('a getInfo without basic_info falls back for the metadata', async () => {
+  const metadata = await readVideoMetadata(YOUTUBE, undefined, async () => ({
+    getBasicInfo: async () => BASIC_ONLY,
+    getInfo: async () => ({ getTranscript: async () => undefined }),
+  }));
+  assert.equal(metadata.title, 'Basic');
+  assert.equal(metadata.transcript, '');
+});
+
+test('both calls failing falls through to oEmbed', async () => {
+  const restore = await stubFetch(() => Response.json({ title: 'From oEmbed', author_name: 'A' }));
+  try {
+    const metadata = await readVideoMetadata(YOUTUBE, undefined, async () => ({
+      getBasicInfo: async () => {
+        throw new Error('down');
+      },
+      getInfo: async () => {
+        throw new Error('down');
+      },
+    }));
+    assert.equal(metadata.title, 'From oEmbed');
+  } finally {
+    restore();
+  }
+});
+
+test('a rejection arriving after the deadline is not left unhandled', async () => {
+  const unhandled: Array<unknown> = [];
+  const seen = (reason: unknown) => unhandled.push(reason);
+  process.on('unhandledRejection', seen);
+  try {
+    await readVideoMetadata(
+      YOUTUBE,
+      undefined,
+      async () => ({
+        getBasicInfo: async () => BASIC_ONLY,
+        getInfo: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          throw new Error('too late');
+        },
+      }),
+      10,
+    );
+    // Give the late rejection time to surface if nothing had swallowed it.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  } finally {
+    process.off('unhandledRejection', seen);
+  }
+  assert.deepEqual(unhandled, []);
+});
+
+test('a getInfo without a caption endpoint is still used for metadata', async () => {
+  const metadata = await readVideoMetadata(YOUTUBE, undefined, async () => ({
+    getBasicInfo: async () => BASIC_ONLY,
+    getInfo: async () => ({ basic_info: { title: 'From Full', duration: 20 } }),
+  }));
+  assert.equal(metadata.title, 'From Full');
+  assert.equal(metadata.transcript, '');
+});
+
+test('a getBasicInfo that never settles does not hold the read open', async () => {
+  // The caption side wins on its own; the slow metadata call is simply unused.
+  // Bounded by the same deadline, so neither side can hang the read.
+  const metadata = await readVideoMetadata(
+    YOUTUBE,
+    undefined,
+    async () => ({
+      getBasicInfo: () => new Promise(() => {}),
+      getInfo: async () => CAPTION_INFO,
+    }),
+    25,
+  );
+  assert.equal(metadata.title, 'Full');
+  assert.equal(metadata.transcript, 'said words');
+});
+
+test('a getBasicInfo that never settles alone still reads', async () => {
+  // The caption side is refused, so the metadata side is all that is left —
+  // and it never answers. Without a deadline this would hang forever.
+  const restore = await stubFetch(() => Response.json({ title: 'From oEmbed', author_name: 'A' }));
+  try {
+    const metadata = await readVideoMetadata(
+      YOUTUBE,
+      undefined,
+      async () => ({
+        getBasicInfo: () => new Promise(() => {}),
+        getInfo: async () => {
+          throw new Error('bot check');
+        },
+      }),
+      25,
+    );
+    assert.equal(metadata.title, 'From oEmbed');
+    assert.equal(metadata.transcript, '');
+  } finally {
+    restore();
+  }
+});
+
+test('a rejected getBasicInfo leaves the value undefined rather than throwing', async () => {
+  const restore = await stubFetch(() => Response.json({ title: 'From oEmbed' }));
+  try {
+    const metadata = await readVideoMetadata(YOUTUBE, undefined, async () => ({
+      getBasicInfo: async () => {
+        throw new Error('watch refused');
+      },
+      getInfo: async () => CAPTION_INFO,
+    }));
+    assert.equal(metadata.title, 'Full');
+  } finally {
+    restore();
+  }
 });

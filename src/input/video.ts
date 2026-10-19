@@ -122,16 +122,22 @@ export function fromInnertube(info: InnertubeVideo | undefined): VideoMetadata |
 export type VideoSessionOptions = Record<string, unknown>;
 
 /**
- * The slice of youtubei.js this module actually uses. `getBasicInfo` is
- * deliberate rather than `getInfo`: it fetches only videoDetails, skipping the
- * engagement panels whose markup YouTube changes often enough to make the
- * parser log type mismatches. Same metadata, no noise.
+ * The slice of youtubei.js this module actually uses.
  *
- * The optional `getTranscript` is what captions need; youtubei.js always
- * provides it on a real session, but a stand-in may not.
+ * Both calls are made: `getInfo` is the only one that can serve captions,
+ * because `MediaInfo.getTranscript` reads the transcript panel out of the
+ * `next` response that only `getInfo` fetches — `getBasicInfo` sends just the
+ * `watch` response and throws "Cannot get transcript from basic video info".
+ * `getBasicInfo` is still called alongside it, both because it is the cheaper
+ * of the two and because it is the fallback whenever `getInfo` is slow or
+ * refused. Its lower parser noise is a bonus, not the reason to call it.
+ *
+ * `getInfo` is optional so a stand-in only has to offer `getBasicInfo`; a
+ * source without it simply has no transcript, which degrades to metadata-only.
  */
 export interface VideoInfoSource {
   getBasicInfo(videoId: string): Promise<unknown>;
+  getInfo?(videoId: string): Promise<unknown>;
 }
 
 /** A caption cue as youtubei.js hands it over. */
@@ -166,6 +172,28 @@ async function readTranscript(info: unknown): Promise<string> {
   }
 }
 
+/** How long the caption fetch may take before the read settles for metadata alone. */
+export const DEFAULT_VIDEO_TRANSCRIPT_MS = 15_000;
+
+/**
+ * Resolves `run()` with undefined once `ms` has passed. Nothing is cancelled —
+ * there is no handle to cancel through this interface — so the loser simply
+ * stops mattering. Every caller attaches its own catch before racing, so a
+ * late rejection cannot surface as an unhandled one.
+ */
+async function within<T>(ms: number, run: () => Promise<T>): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ms);
+  });
+  try {
+    return await Promise.race([run(), expiry]);
+  } finally {
+    // Left armed, the timer holds the event loop and the process never exits.
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /** Builds a session; `undefined` means "youtubei.js is not installed". */
 export type InnertubeFactory = (
   session: VideoSessionOptions,
@@ -192,15 +220,41 @@ async function readYouTubeInfo(
   url: URL,
   session: VideoSessionOptions = {},
   factory: InnertubeFactory = defaultInnertubeFactory,
+  timeoutMs: number = DEFAULT_VIDEO_TRANSCRIPT_MS,
 ): Promise<VideoMetadata | undefined> {
   const videoId = videoIdOf(url);
   if (!videoId) return undefined;
   const innertube = await factory(session);
   if (!innertube) return undefined;
-  const info = await innertube.getBasicInfo(videoId);
-  const metadata = fromInnertube(info as InnertubeVideo | undefined);
+
+  // Both start together. `getInfo` is the only source of captions but also the
+  // one that trips YouTube's bot checks, so it races a deadline; every failure
+  // path degrades to whatever `getBasicInfo` produced. Both sides are bounded —
+  // an unbounded wait on either one would hang the read outright. Each catch is
+  // attached where the promise is made, because a rejection arriving after the
+  // race has settled would otherwise be unhandled.
+  const basicInfo = within(timeoutMs, () => innertube.getBasicInfo(videoId)).catch(() => undefined);
+  const fullInfo = innertube.getInfo
+    ? within(timeoutMs, () => innertube.getInfo!(videoId)).catch(() => undefined)
+    : undefined;
+
+  // Both are caught where they are made, so both settle as fulfilled; the only
+  // way either arrives undefined is the deadline expiring. `fullInfo` is absent
+  // entirely for a source with no `getInfo`.
+  const [basic, full] = await Promise.all([basicInfo, fullInfo ?? Promise.resolve(undefined)]);
+  const fullValue = full;
+  const basicValue = basic;
+
+  // `getInfo` wins when it lands — it carries the same metadata plus captions —
+  // but a response without usable basic_info still leaves the cheap one to fall
+  // back on, so neither call can spoil the other.
+  const metadata =
+    fromInnertube(fullValue as InnertubeVideo | undefined) ??
+    fromInnertube(basicValue as InnertubeVideo | undefined);
   if (!metadata) return undefined;
-  const transcript = await readTranscript(info);
+  if (!fullValue) return metadata;
+
+  const transcript = await readTranscript(fullValue);
   return transcript.length > 0 ? { ...metadata, transcript } : metadata;
 }
 
@@ -240,9 +294,10 @@ export async function readVideoMetadata(
   url: URL,
   session?: VideoSessionOptions,
   factory?: InnertubeFactory,
+  timeoutMs?: number,
 ): Promise<VideoMetadata> {
   if (isYouTube(url)) {
-    const info = await readYouTubeInfo(url, session, factory);
+    const info = await readYouTubeInfo(url, session, factory, timeoutMs);
     if (info) {
       logger().debug('Read video metadata via youtubei.js', {
         url: url.toString(),
