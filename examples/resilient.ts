@@ -8,5 +8,5 @@ const extractor = createExtractor({
   }),
 });
 
-const spec = await extractor.extract('The Acme Kettle holds 1.5 L, weighs 900 g.');
+const spec = await extractor.extract('https://www.crn.de/news/2026/translated/nach-hornetsecurity-nachste-milliarden-akquisition-von-proofpoint');
 console.log(JSON.stringify(spec, null, 2));

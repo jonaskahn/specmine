@@ -1,4 +1,7 @@
 import type { ClassifierMode } from './classify/classifier.js';
+import type { ImageCandidate } from './media/candidates.js';
+
+import type { CostSummary } from './telemetry/cost.js';
 
 export type SpecValue = string;
 
@@ -112,6 +115,17 @@ export interface GeneratedImage {
   revisedPrompt?: string;
 }
 
+/** How the picture decision ended: reuse the page's own, draw one, refuse, or have nothing. */
+export type PictureOutcome = 'reused' | 'generated' | 'blocked' | 'none';
+
+export interface PictureInfo {
+  outcome: PictureOutcome;
+  /** where a reused picture came from */
+  source?: ImageCandidate['source'];
+  url?: string;
+  alt?: string;
+}
+
 export interface ProcessErrors {
   spec?: import('./errors.js').ExtractionError;
   image?: import('./errors.js').ExtractionError;
@@ -122,5 +136,12 @@ export interface ProcessResult {
   spec?: SpecsResult;
   tags?: TagsResult;
   image?: GeneratedImage;
+  /** the picture decision, always stated — including when nothing was made */
+  picture?: PictureInfo;
+  /** every image the input offered, best-scoring first. Present whenever the
+   *  source markup carried any; `picture` is the decision, this is the evidence. */
+  images?: ImageCandidate[];
+  /** token usage and estimated dollars for this run */
+  cost?: CostSummary;
   errors?: ProcessErrors;
 }

@@ -7,18 +7,38 @@ import { ExtractionError } from '../errors.js';
 import { logger } from '../log.js';
 import type { ExtractInput } from '../types.js';
 import { htmlToMarkdown } from './html.js';
+import { extractImageCandidates } from '../media/candidates.js';
+import type { ImageCandidate } from '../media/candidates.js';
 import type { PdfInspector } from './pdf.js';
 import { pickUserAgent } from './user-agent.js';
+import { isVideoUrl, readVideoMetadata, thumbnailCandidate, videoToText } from './video.js';
 
 export const REMOTE_TEMP_PREFIX = 'specmine-remote-';
+
+export type InputKind = 'text' | 'html' | 'url' | 'video' | 'pdf' | 'scanned_pdf';
 
 export interface ReadResult {
   text: string;
   imageOnly: boolean;
+  /** which of the six input kinds this was detected as */
+  kind: InputKind;
+  /** the page's own pictures, when the source markup offered any. Optional so
+   *  custom readers written against the older shape keep working. */
+  candidates?: ImageCandidate[];
 }
 
 export interface InputReader {
   read(input: ExtractInput): Promise<ReadResult>;
+}
+
+/**
+ * One place where HTML is turned into Markdown, so the kind label and the
+ * picture candidates always agree with the text the classifier will read.
+ */
+function fromMarkdown(raw: string, baseUrl: string | undefined): ReadResult {
+  const text = htmlToMarkdown(raw);
+  const candidates = extractImageCandidates(raw, baseUrl);
+  return { text, imageOnly: false, kind: candidates.length > 0 ? 'html' : 'text', candidates };
 }
 
 export class DefaultReader implements InputReader {
@@ -26,7 +46,7 @@ export class DefaultReader implements InputReader {
 
   async read(input: ExtractInput): Promise<ReadResult> {
     if (typeof input === 'string') {
-      return { text: htmlToMarkdown(input), imageOnly: false };
+      return fromMarkdown(input, undefined);
     }
     if (input instanceof URL) {
       return this.readUrl(input);
@@ -37,6 +57,16 @@ export class DefaultReader implements InputReader {
   private async readUrl(url: URL): Promise<ReadResult> {
     if (url.protocol === 'file:') {
       return this.readBlob(new Blob([await readFile(fileURLToPath(url))]));
+    }
+    if (isVideoUrl(url)) {
+      const metadata = await readVideoMetadata(url);
+      const text = videoToText(metadata);
+      return {
+        text,
+        imageOnly: false,
+        kind: 'video',
+        candidates: thumbnailCandidate(metadata.thumbnail),
+      };
     }
     if (url.protocol === 'http:' || url.protocol === 'https:') {
       const response = await fetch(url, { headers: { 'User-Agent': pickUserAgent() } });
@@ -49,7 +79,7 @@ export class DefaultReader implements InputReader {
         status: response.status,
         contentType,
       });
-      return this.readRemoteFile(await response.arrayBuffer(), contentType);
+      return this.readRemoteFile(await response.arrayBuffer(), contentType, url.toString());
     }
     throw new ExtractionError('UNSUPPORTED_INPUT', `Unsupported URL scheme: ${url.protocol}`);
   }
@@ -57,23 +87,24 @@ export class DefaultReader implements InputReader {
   private async readRemoteFile(
     bytes: ArrayBuffer,
     contentType: string | null,
+    baseUrl?: string,
   ): Promise<ReadResult> {
     const tmpPath = join(tmpdir(), `${REMOTE_TEMP_PREFIX}${randomUUID()}`);
     try {
       await writeFile(tmpPath, Buffer.from(bytes));
       const diskBytes = await readFile(tmpPath);
-      return await this.readBlob(new Blob([diskBytes], { type: contentType ?? '' }));
+      return await this.readBlob(new Blob([diskBytes], { type: contentType ?? '' }), baseUrl);
     } finally {
       await rm(tmpPath, { force: true });
     }
   }
 
-  private async readBlob(blob: Blob): Promise<ReadResult> {
+  private async readBlob(blob: Blob, baseUrl?: string): Promise<ReadResult> {
     if (await this.isPdf(blob)) {
       return this.readPdf(blob);
     }
     logger().debug('Read text input', { type: blob.type, size: blob.size });
-    return { text: htmlToMarkdown(await blob.text()), imageOnly: false };
+    return fromMarkdown(await blob.text(), baseUrl);
   }
 
   private async isPdf(blob: Blob): Promise<boolean> {
@@ -97,8 +128,8 @@ export class DefaultReader implements InputReader {
         type: blob.type,
         size: blob.size,
       });
-      return { text: '', imageOnly: true };
+      return { text: '', imageOnly: true, kind: 'scanned_pdf', candidates: [] };
     }
-    return { text: result.markdown, imageOnly: false };
+    return { text: result.markdown, imageOnly: false, kind: 'pdf', candidates: [] };
   }
 }

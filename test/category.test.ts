@@ -7,6 +7,7 @@ import {
   registerCategory,
   resetCategoryOverrides,
   resolveProfile,
+  tuneProfile,
 } from '../src/category/registry.js';
 import type { DomainId } from '../src/category/types.js';
 
@@ -91,4 +92,23 @@ test('domains carry visual fields with family fallback', () => {
   const general = resolveProfile('general');
   assert.equal(general.recipe.id, 'generic_subject');
   assert.equal(general.minFacts, 2);
+});
+
+test('an identify key tunes ignore rules without stripping the profile', () => {
+  const base = resolveProfile('software_app');
+  const tuned = tuneProfile(base, 'software_app');
+  assert.ok(tuned.specIgnore.includes('changelog entries'));
+  assert.ok(base.specIgnore.length > 0, 'the built-in rules survive');
+  assert.ok(tuned.familySpecHints.length > 0, 'family hints are untouched');
+});
+
+test('an unknown or generic identify key leaves the profile untouched', () => {
+  const base = resolveProfile('electronics');
+  assert.equal(tuneProfile(base, 'general'), base);
+  assert.equal(tuneProfile(base, 'spaceships'), base);
+});
+
+test('tuning never duplicates a rule the profile already had', () => {
+  const tuned = tuneProfile(resolveProfile('electronics'), 'electronics');
+  assert.equal(new Set(tuned.specIgnore).size, tuned.specIgnore.length);
 });

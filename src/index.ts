@@ -10,6 +10,8 @@ export type {
   ImageOutputOptions,
   NestedSpecs,
   OutputKind,
+  PictureInfo,
+  PictureOutcome,
   ProcessErrors,
   ProcessMode,
   ProcessOptions,
@@ -22,9 +24,11 @@ export type {
 export { ExtractionError, isExtractionError } from './errors.js';
 export type { Extractor, ExtractorDependencies } from './extractor.js';
 export { createExtractor, DefaultExtractor, extract, extractTags } from './extractor.js';
-export type { InputReader, ReadResult } from './input/reader.js';
+export type { InputKind, InputReader, ReadResult } from './input/reader.js';
 export { DefaultReader } from './input/reader.js';
 export type { PdfClassification, PdfExtraction, PdfInspector, PdfType } from './input/pdf.js';
+export type { VideoMetadata } from './input/video.js';
+export { isVideoUrl, thumbnailCandidate, videoToText } from './input/video.js';
 export { NapiPdfInspector } from './input/napi-pdf-inspector.js';
 export type {
   LlmContentPart,
@@ -82,6 +86,7 @@ export {
   registerCategory,
   resetCategoryOverrides,
   resolveProfile,
+  tuneProfile,
 } from './category/registry.js';
 export type {
   Classification,
@@ -91,6 +96,22 @@ export type {
   FallbackReason,
 } from './classify/classifier.js';
 export { JevClassifier, createJevClassifier } from './classify/jev.js';
+export type { IdentifyAnswer, IdentifyOptions } from './classify/identify.js';
+export {
+  buildIdentifyQuestions,
+  GENERIC_IDENTIFY,
+  IDENTIFY_WINDOW_CHARS,
+  identifyContent,
+} from './classify/identify.js';
+export type { CandidateSource, ImageCandidate } from './media/candidates.js';
+export { extractImageCandidates, pickReusableImage } from './media/candidates.js';
+export type { CostSummary, UsageEntry } from './telemetry/cost.js';
+export {
+  BLENDED_RATE_PER_MTOK,
+  emptySummary,
+  estimateCost,
+  recordUsage,
+} from './telemetry/cost.js';
 export { LlmClassifier } from './classify/llm.js';
 export type { PromptMode } from './prompts/spec.js';
 export { buildSystemPrompt } from './prompts/spec.js';

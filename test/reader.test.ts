@@ -221,3 +221,17 @@ test('detects pdf by magic bytes when content-type missing', async () => {
   const result = await reader.read(blob);
   assert.equal(result.imageOnly, true);
 });
+
+test('markup with a picture is labelled html and carries the candidate', async () => {
+  const result = await new DefaultReader().read(
+    '<html><head><meta property="og:image" content="https://cdn.example.com/a.jpg"></head><body><p>Kettle</p></body></html>',
+  );
+  assert.equal(result.kind, 'html');
+  assert.equal(result.candidates?.length, 1);
+});
+
+test('plain markup with no picture is labelled text', async () => {
+  const result = await new DefaultReader().read('<html><body><p>Kettle</p></body></html>');
+  assert.equal(result.kind, 'text');
+  assert.deepEqual(result.candidates, []);
+});

@@ -27,8 +27,11 @@ export const CLASSIFY_SCHEMA = {
 const SYSTEM_PROMPT =
   'You are a fast content router. Reply with a single JSON object and nothing else: {"kind","domain","scope","visual"}. kind is one of item_detail,item_collection,editorial,instructional,policy_legal,non_content. scope is one of single,multiple,none. visual is true when the content describes something depictable in a picture.';
 
+/** The cheap router only ever sees the opening window, matching identify. */
+export const CLASSIFY_WINDOW_CHARS = 8000;
+
 function userPrompt(text: string, domains: DomainId[]): string {
-  return `Domains: ${domains.join(', ')}. Classify this content (first 6000 chars):\n\n${text.slice(0, 6000)}`;
+  return `Domains: ${domains.join(', ')}. Classify this content (first ${CLASSIFY_WINDOW_CHARS} chars):\n\n${text.slice(0, CLASSIFY_WINDOW_CHARS)}`;
 }
 
 export class LlmClassifier implements ContentClassifier {

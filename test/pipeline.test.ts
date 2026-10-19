@@ -7,6 +7,8 @@ import { ExtractionError } from '../src/errors.js';
 import type { ImageProvider } from '../src/llm/openai-image.js';
 import type { LlmProvider, LlmResponse } from '../src/llm/provider.js';
 import type { InputReader, ReadResult } from '../src/input/reader.js';
+import { registerCategory, resetCategoryOverrides } from '../src/category/registry.js';
+import type { ImageCandidate } from '../src/media/candidates.js';
 import { JsonSpecValidator } from '../src/spec/validator.js';
 import {
   analyze,
@@ -65,11 +67,17 @@ function productClassification(): Classification {
 }
 
 function imageProvider(
-  options: { fail?: Error; revisedPrompt?: string; seen?: Array<Record<string, unknown>> } = {},
+  options: {
+    fail?: Error;
+    revisedPrompt?: string;
+    seen?: Array<Record<string, unknown>>;
+    onGenerate?: () => void;
+  } = {},
 ): ImageProvider {
   return {
     async generate(request) {
       options.seen?.push(request as unknown as Record<string, unknown>);
+      options.onGenerate?.();
       if (options.fail) throw options.fail;
       const out: { bytes: Uint8Array; mimeType: string; revisedPrompt?: string } = {
         bytes: new Uint8Array([1, 2, 3]),
@@ -832,4 +840,224 @@ test('ladder briefs reuse the configured image model', async () => {
   const result = await built.process('x', { outputs: ['image'], image: { model: 'img-model' } });
   assert.equal(result.image?.grounding, 'contextual');
   assert.ok(models.every((model) => model === 'img-model'));
+});
+
+function readerWithPictures(text: string, candidates: ImageCandidate[]): InputReader {
+  return {
+    async read(): Promise<ReadResult> {
+      return { text, imageOnly: false, kind: 'html', candidates };
+    },
+  };
+}
+
+test("the page's own picture is reused instead of drawn", async () => {
+  let generated = 0;
+  const built = createPipeline({
+    reader: readerWithPictures(TEXT, [
+      { url: 'https://cdn.example.com/hero.jpg', source: 'og:image', alt: 'the kettle', score: 1 },
+    ]),
+    llm: scriptLlm([SPECS_JSON]).llm,
+    imageProvider: imageProvider(() => {
+      generated += 1;
+    }),
+  });
+  const result = await built.process('x', { outputs: ['image'] });
+  assert.equal(result.picture?.outcome, 'reused');
+  assert.equal(result.picture?.url, 'https://cdn.example.com/hero.jpg');
+  assert.equal(result.picture?.source, 'og:image');
+  assert.equal(generated, 0);
+});
+
+test('a page with no picture falls through to drawing', async () => {
+  const built = createPipeline({
+    reader: readerWithPictures(TEXT, []),
+    llm: scriptLlm([SPECS_JSON]).llm,
+    imageProvider: imageProvider(),
+  });
+  const result = await built.process('x', { outputs: ['image'] });
+  assert.equal(result.picture?.outcome, 'generated');
+});
+
+test('non-content states a blocked outcome instead of staying silent', async () => {
+  const built = createPipeline({
+    reader: reader(TEXT),
+    llm: scriptLlm([SPECS_JSON]).llm,
+    classifier: classifier({ ...productClassification(), kind: 'non_content' }),
+    imageProvider: imageProvider(),
+  });
+  const result = await built.process('x', {
+    outputs: ['image'],
+    category: 'electronics',
+    kind: 'non_content',
+  });
+  assert.equal(result.picture?.outcome, 'blocked');
+});
+
+test('a spec-only run states no picture decision', async () => {
+  const built = createPipeline({ reader: reader(TEXT), llm: scriptLlm([SPECS_JSON]).llm });
+  const result = await built.process(TEXT);
+  assert.equal(result.picture, undefined);
+});
+
+test('every candidate is returned, with the decision naming one of them', async () => {
+  const candidates = [
+    { url: 'https://cdn.example.com/hero.jpg', source: 'og:image' as const, alt: '', score: 1 },
+    { url: 'https://cdn.example.com/a.jpg', source: 'gallery' as const, alt: 'A', score: 0.6 },
+    { url: 'https://cdn.example.com/b.jpg', source: 'gallery' as const, alt: 'B', score: 0.6 },
+  ];
+  const built = createPipeline({
+    reader: readerWithPictures(TEXT, candidates),
+    llm: scriptLlm([SPECS_JSON]).llm,
+    imageProvider: imageProvider(),
+  });
+  const result = await built.process('x', { outputs: ['image'] });
+  assert.deepEqual(result.images, candidates);
+  assert.equal(result.picture?.url, candidates[0]?.url);
+});
+
+test('a page offering no pictures reports no image list', async () => {
+  const built = createPipeline({
+    reader: readerWithPictures(TEXT, []),
+    llm: scriptLlm([SPECS_JSON]).llm,
+  });
+  const result = await built.process('x');
+  assert.equal(result.images, undefined);
+});
+
+test('the run reports its token usage and cost', async () => {
+  const llm: LlmProvider = {
+    async complete(): Promise<LlmResponse> {
+      return { content: SPECS_JSON, usage: { inputTokens: 500, outputTokens: 100 } };
+    },
+  };
+  const built = createPipeline({ reader: reader(TEXT), llm });
+  const result = await built.process(TEXT);
+  const spec = result.cost?.calls.find((call) => call.stage === 'spec');
+  assert.deepEqual(spec, { stage: 'spec', model: 'unknown', inputTokens: 500, outputTokens: 100 });
+  assert.ok((result.cost?.totalTokens ?? 0) >= 600);
+});
+
+test('identify tunes the domain when the classifier fell back', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    Response.json({
+      answers: { domain: { answer: 'furniture_decor' }, kind: { answer: 'item_detail' } },
+    })) as typeof fetch;
+  const previous = process.env.TYPESAFE_API_KEY;
+  process.env.TYPESAFE_API_KEY = 'k';
+  try {
+    const built = createPipeline({
+      reader: reader(TEXT),
+      llm: scriptLlm([SPECS_JSON]).llm,
+      classifier: classifier({ ...GENERIC_CLASSIFICATION, reason: 'no_key' }),
+    });
+    const result = await built.process(TEXT, { classifier: { mode: 'off' } });
+    assert.equal(result.category.domain, 'furniture_decor');
+    assert.equal(result.cost?.calls[0]?.stage, 'identify');
+  } finally {
+    globalThis.fetch = original;
+    if (previous === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previous;
+  }
+});
+
+test('an identify domain is not applied over a confident classification', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    Response.json({ answers: { domain: { answer: 'furniture_decor' } } })) as typeof fetch;
+  const previous = process.env.TYPESAFE_API_KEY;
+  process.env.TYPESAFE_API_KEY = 'k';
+  try {
+    const built = createPipeline({
+      reader: reader(TEXT),
+      llm: scriptLlm([SPECS_JSON]).llm,
+      classifier: classifier(productClassification()),
+    });
+    const result = await built.process(TEXT);
+    assert.equal(result.category.domain, 'electronics');
+  } finally {
+    globalThis.fetch = original;
+    if (previous === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previous;
+  }
+});
+
+test('identify receives the classifier host and model overrides', async () => {
+  const original = globalThis.fetch;
+  let url = '';
+  globalThis.fetch = (async (input: unknown) => {
+    url = String(input);
+    return Response.json({ answers: {} });
+  }) as typeof fetch;
+  const previous = process.env.TYPESAFE_API_KEY;
+  process.env.TYPESAFE_API_KEY = 'k';
+  try {
+    const built = createPipeline({
+      reader: reader(TEXT),
+      llm: scriptLlm([SPECS_JSON]).llm,
+      classifier: classifier(productClassification()),
+    });
+    await built.process(TEXT, {
+      classifier: { apiKey: 'k', apiHost: 'https://jev.example', model: 'jev-x' },
+    });
+    assert.match(url, /^https:\/\/jev\.example\/v1\/systemone$/);
+  } finally {
+    globalThis.fetch = original;
+    if (previous === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previous;
+  }
+});
+
+test('a run without a classifier model override still identifies', async () => {
+  const built = createPipeline({
+    reader: reader(TEXT),
+    llm: scriptLlm([SPECS_JSON]).llm,
+    classifier: classifier(productClassification()),
+  });
+  const result = await built.process(TEXT);
+  assert.equal(
+    result.cost?.calls.some((call) => call.stage === 'identify'),
+    true,
+  );
+});
+
+test('a failed image draw states a blocked outcome', async () => {
+  const built = createPipeline({
+    reader: reader(TEXT),
+    llm: scriptLlm([SPECS_JSON]).llm,
+    imageProvider: imageProvider({ fail: new Error('refused') }),
+  });
+  const result = await built.process('x', {
+    outputs: ['image', 'spec'],
+    category: 'electronics',
+  });
+  assert.equal(result.picture?.outcome, 'blocked');
+  assert.ok(result.errors?.image);
+});
+
+test('a reader with no candidates field falls through to drawing', async () => {
+  const built = createPipeline({
+    reader: reader(TEXT),
+    llm: scriptLlm([SPECS_JSON]).llm,
+    imageProvider: imageProvider(),
+  });
+  const result = await built.process('x', { outputs: ['image'], category: 'electronics' });
+  assert.equal(result.picture?.outcome, 'generated');
+});
+
+test('a category that forbids images states none rather than drawing', async () => {
+  registerCategory('electronics', { allowImage: false });
+  try {
+    const built = createPipeline({
+      reader: reader(TEXT),
+      llm: scriptLlm([SPECS_JSON]).llm,
+      classifier: classifier(productClassification()),
+      imageProvider: imageProvider(),
+    });
+    const result = await built.process('x', { outputs: ['image'] });
+    assert.equal(result.picture?.outcome, 'none');
+    assert.match(result.errors?.image?.message ?? '', /does not allow images/);
+  } finally {
+    resetCategoryOverrides();
+  }
 });

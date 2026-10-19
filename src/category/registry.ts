@@ -432,3 +432,29 @@ export function resolveProfile(domain: DomainId): ResolvedProfile {
 export function familyOf(domain: DomainId): FamilyId {
   return getDomainProfile(domain).family;
 }
+
+/**
+ * Extra per-key prompt tuning that identify contributes on top of the built-in
+ * profile. The key is whatever identify answered with, so an unfamiliar key
+ * simply contributes nothing and the built-in profile stands.
+ */
+const IDENTIFY_IGNORE: Record<string, string[]> = {
+  electronics: ['price comparison', 'star ratings breakdown'],
+  food_beverage: ['delivery windows', 'nutritional advice'],
+  software_app: ['changelog entries', 'roadmap slides'],
+  job_listing: ['company boilerplate', 'recruiter contact details'],
+  editorial: ['newsletter signup prompts', 'related-article lists'],
+};
+
+/**
+ * A resolved profile tuned by identify's answer. Extra ignore rules are merged,
+ * never substituted, so an unfamiliar key cannot strip a profile of its own.
+ */
+export function tuneProfile(profile: ResolvedProfile, categoryKey: string): ResolvedProfile {
+  const extraIgnore = IDENTIFY_IGNORE[categoryKey];
+  if (!extraIgnore) return profile;
+  return {
+    ...profile,
+    specIgnore: [...new Set([...profile.specIgnore, ...extraIgnore])],
+  };
+}

@@ -44,6 +44,35 @@ const spec = await extract(fileOrBlob);
 const spec = await extract(new URL('https://example.com/kettle.pdf'));
 ```
 
+Each kind has a plain-English description and the module that handles it:
+
+| Kind        | What it is                                                                                                                                                        | Where it happens                           |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| text        | A string or a plain file, read as-is.                                                                                                                             | `reader.ts · read()`, `html.ts` is a no-op |
+| html        | Saved or fetched markup, converted to Markdown — tables stay as tables.                                                                                           | `html.ts · htmlToMarkdown()`               |
+| url         | A live page, fetched and converted, keeping the words and dropping the code.                                                                                      | `reader.ts · readUrl()`                    |
+| video       | A YouTube or Vimeo link. The page has no readable prose, so title, author and description are fetched from oEmbed and classified from those. No frame extraction. | `reader.ts · readUrl()`, `video.ts`        |
+| pdf         | A PDF with a real text layer.                                                                                                                                     | `napi-pdf-inspector.ts`                    |
+| scanned_pdf | A PDF that is only pictures. We stop and tell you, instead of guessing.                                                                                           | `pipeline.ts · the halt`                   |
+
+`reader.read()` reports which kind it saw on `ReadResult.kind`, so you can log
+or branch on it yourself.
+
+#### Video links
+
+```ts
+const spec = await extract(new URL('https://www.youtube.com/watch?v=dQw4w9WgXcQ'));
+```
+
+#### Scanned PDFs
+
+A PDF whose pages carry no text layer raises `EMPTY_INPUT` rather than returning
+a half-empty spec.
+
+```ts
+await extract(scannedPdf); // throws ExtractionError('EMPTY_INPUT')
+```
+
 ### Reading a file from disk
 
 Wrap a file in a `Blob`. The content type is optional — `%PDF` magic bytes are
@@ -207,6 +236,66 @@ covers both text and image calls.
 Skip the classifier with `category` (e.g. `electronics`, `apparel_footwear`,
 `real_estate`); use `mode: 'sequential'` to render from the extracted spec
 instead of a separate visual pass.
+
+### Picture decision
+
+The pipeline decides where the picture comes from, and always says what it
+decided in `result.picture.outcome`:
+
+| Outcome     | Meaning                                                                                   |
+| ----------- | ----------------------------------------------------------------------------------------- |
+| `reused`    | The page already had a usable photo; nothing was generated. `source` and `url` say which. |
+| `generated` | The page had no photo, so one was drawn from the extracted facts.                         |
+| `blocked`   | There was something to depict, but the draw was refused or failed.                        |
+| `none`      | The category never takes a picture, so none was attempted.                                |
+
+Reuse comes from the page's own markup — `og:image`, `twitter:image`, gallery
+images, then alt text — never from a generated image. A page that already
+carries a good photo costs nothing and is more faithful than a render.
+
+```ts
+const result = await analyze(htmlPage, { outputs: ['image'] });
+result.picture;
+// { outcome: 'reused', source: 'og:image', url: 'https://cdn.example.com/hero.jpg', alt: 'the kettle' }
+```
+
+### Every image the page offers
+
+`result.images` returns the full candidate list, not just the winner, so you can
+pick a different image than the pipeline did without re-reading the page. Each
+entry carries `url`, `source`, `alt`, `score`, `position` (document order), and
+whichever of `width`, `height`, `type` and `title` the markup stated — keys are
+absent rather than empty when the page said nothing.
+
+`picture` is the decision; `images` is the evidence behind it.
+
+```ts
+const result = await analyze(htmlPage, { outputs: ['image'] });
+result.images?.[0];
+// {
+//   url: 'https://cdn.example.com/hero.jpg',
+//   source: 'og:image', alt: '', score: 1, position: 0,
+//   width: 1600, height: 900, type: 'image/webp', title: 'The kettle',
+// }
+```
+
+When `reuse` wins, no image provider is called at all.
+
+### Cost
+
+Every run reports what it spent:
+
+```ts
+const result = await analyze('...', { outputs: ['spec'] });
+result.cost;
+// { calls: [{ stage: 'identify', model: 'jev-latest', inputTokens: 2000, outputTokens: 0 }],
+//   inputTokens: 2000, outputTokens: 0, totalTokens: 2000 }
+```
+
+Tokens come from the provider's own usage report — nothing is estimated, so a
+provider that doesn't report usage records zero rather than a guess. `identify`
+is priced at the Jev rate and its output is free; spec and image calls use the
+blended LLM rate (`BLENDED_RATE_PER_MTOK`).
 
 ### Classification
 

@@ -1,4 +1,4 @@
-import { familyOf, listDomains, resolveProfile } from './category/registry.js';
+import { familyOf, listDomains, resolveProfile, tuneProfile } from './category/registry.js';
 import type { DomainId, ResolvedProfile } from './category/types.js';
 import {
   GENERIC_CLASSIFICATION,
@@ -8,6 +8,7 @@ import {
   type ContentClassifier,
   type FallbackReason,
 } from './classify/classifier.js';
+import { identifyContent, GENERIC_IDENTIFY, type IdentifyAnswer } from './classify/identify.js';
 import { JevClassifier } from './classify/jev.js';
 import { LlmClassifier } from './classify/llm.js';
 import { ExtractionError } from './errors.js';
@@ -16,6 +17,7 @@ import { NapiPdfInspector } from './input/napi-pdf-inspector.js';
 import { createAnthropicProvider } from './llm/anthropic.js';
 import { createOpenAiImageProvider, type ImageProvider } from './llm/openai-image.js';
 import { createOpenAiProvider } from './llm/openai.js';
+import { MeteredProvider } from './llm/metered.js';
 import type { LlmProvider } from './llm/provider.js';
 import { logger } from './log.js';
 import { DefaultExtractor } from './extractor.js';
@@ -25,6 +27,8 @@ import { hasEnoughFacts } from './image/facts.js';
 import { resolveGroundedFacts } from './image/ladder.js';
 import { ARCHETYPE_RECIPES } from './category/archetypes.js';
 import { pickVisualFacts } from './image/fact-picker.js';
+import { pickReusableImage } from './media/candidates.js';
+import { emptySummary, logCostSummary, recordUsage } from './telemetry/cost.js';
 import { buildImagePrompt } from './image/prompt-builder.js';
 import { VisualExtractor } from './image/visual-extractor.js';
 import type {
@@ -33,6 +37,7 @@ import type {
   GeneratedImage,
   ProcessOptions,
   ProcessResult,
+  PictureInfo,
   SpecsResult,
   TagsResult,
 } from './types.js';
@@ -91,11 +96,16 @@ function defaultClassifier(llm: LlmProvider, options?: ProcessOptions): ContentC
   return fallback('no_key');
 }
 
+/**
+ * The identify answer tunes the classification: a domain it already settled
+ * wins over the classifier's guess, but never over an explicit user category.
+ */
 async function classifyInput(
   text: string,
   classifier: ContentClassifier,
   options: ProcessOptions | undefined,
   callOptions: CallOptions,
+  identified: IdentifyAnswer,
 ): Promise<Classification> {
   if (options?.category !== undefined) {
     return {
@@ -116,18 +126,40 @@ async function classifyInput(
         ? { minConfidence: options.classifier.minConfidence }
         : {}),
     });
-    return result;
+    const tuned =
+      result.source === 'fallback' && identified.domain !== GENERIC_IDENTIFY.domain
+        ? { ...result, domain: identified.domain }
+        : result;
+    logger().info('Classification resolved', {
+      kind: tuned.kind,
+      domain: tuned.domain,
+      confidence: tuned.confidence,
+    });
+    return tuned;
   } catch {
     return { ...GENERIC_CLASSIFICATION, reason: 'classify_error' };
   }
 }
 
-function profileOf(classification: Classification): ResolvedProfile {
-  return resolveProfile(classification.domain);
+/**
+ * The profile identify selected tunes every downstream prompt. When identify
+ * is unsure or failed, `GENERIC_IDENTIFY.category` is the generic key, which
+ * contributes no tuning — the generic profile, as the spec requires.
+ */
+function profileOf(classification: Classification, identified: IdentifyAnswer): ResolvedProfile {
+  return tuneProfile(resolveProfile(classification.domain), identified.category);
 }
 
-function imageSkipped(classification: Classification): string | undefined {
-  if (classification.kind === 'non_content') return 'No content to depict';
+/**
+ * A block is content that *should* have had a picture but cannot; a refusal is
+ * a category that never takes one. They read differently in the outcome field.
+ */
+function imageBlocker(
+  classification: Classification,
+  profile: ResolvedProfile,
+): 'blocked' | 'refused' | undefined {
+  if (classification.kind === 'non_content') return 'blocked';
+  if (!profile.allowImage) return 'refused';
   return undefined;
 }
 
@@ -158,48 +190,75 @@ export class DefaultPipeline {
     if (!text) {
       throw new ExtractionError('EMPTY_INPUT', 'Input is empty');
     }
+    const cost = emptySummary();
+    const metered = new MeteredProvider(this.dependencies.llm, cost);
+    const identified = await identifyContent(
+      text,
+      {
+        ...(options?.classifier?.apiKey !== undefined ? { apiKey: options.classifier.apiKey } : {}),
+        ...(options?.classifier?.apiHost !== undefined
+          ? { apiHost: options.classifier.apiHost }
+          : {}),
+        ...(options?.classifier?.model !== undefined ? { model: options.classifier.model } : {}),
+      },
+      (stateChars) =>
+        recordUsage(cost, {
+          stage: 'identify',
+          model: 'jev-latest',
+          inputTokens: Math.ceil(stateChars / 4),
+        }),
+    );
     const classification = await classifyInput(
       text,
       this.dependencies.classifier,
       options,
       callOptions,
+      identified,
     );
     if (classification.kind === 'non_content' && options?.category === undefined) {
       throw new ExtractionError('EMPTY_INPUT', 'Input contains no usable content');
     }
-    const profile = profileOf(classification);
+    const profile = profileOf(classification, identified);
     log.info('Process started', {
       kind: classification.kind,
       domain: classification.domain,
+      input: readResult.kind,
       mode,
       outputs: outputs.join(','),
     });
     const startedAt = Date.now();
     const extractor = new DefaultExtractor({
       reader: this.dependencies.reader,
-      llm: this.dependencies.llm,
+      llm: metered,
       validator: this.dependencies.validator,
     });
     const specMode = options?.tags === true ? 'specs-and-tags' : 'specs';
 
     const runSpec = async (): Promise<{ spec: SpecsResult; tags: TagsResult }> =>
-      extractor.extractFromText(text, options, specMode, profile);
+      metered.withStage('spec', () => extractor.extractFromText(text, options, specMode, profile));
 
     const dynamicFacts = async () => {
-      const visual = new VisualExtractor(this.dependencies.llm);
-      return visual.extract(text, profile, {
-        ...callOptions,
-        ...(options?.image?.model !== undefined ? { model: options.image.model } : {}),
-        minFacts: profile.minFacts,
-      });
+      const visual = new VisualExtractor(metered);
+      return metered.withStage('image', () =>
+        visual.extract(text, profile, {
+          ...callOptions,
+          ...(options?.image?.model !== undefined ? { model: options.image.model } : {}),
+          minFacts: profile.minFacts,
+        }),
+      );
     };
 
     const runImageDynamic = async (): Promise<GeneratedImage> =>
-      this.runImage(profile, options, callOptions, text, dynamicFacts);
+      this.runImage(profile, options, callOptions, text, dynamicFacts, metered);
 
     const runImageFromSpec = async (spec: SpecsResult, tags: TagsResult): Promise<GeneratedImage> =>
-      this.runImage(profile, options, callOptions, text, async () =>
-        pickVisualFacts(spec, tags, profile.subjectNoun, profile.keyMap),
+      this.runImage(
+        profile,
+        options,
+        callOptions,
+        text,
+        async () => pickVisualFacts(spec, tags, profile.subjectNoun, profile.keyMap),
+        metered,
       );
 
     let spec: SpecsResult | undefined;
@@ -208,10 +267,24 @@ export class DefaultPipeline {
     let specError: ExtractionError | undefined;
     let imageError: ExtractionError | undefined;
 
-    const skipReason = wantImage ? imageSkipped(classification) : undefined;
+    const blocker = wantImage ? imageBlocker(classification, profile) : undefined;
+    const skipReason =
+      blocker === 'blocked'
+        ? 'No content to depict'
+        : blocker === 'refused'
+          ? `Category ${classification.domain} does not allow images`
+          : undefined;
     if (skipReason) {
       imageError = new ExtractionError('UNSUPPORTED_INPUT', skipReason);
     }
+    // Stage 1+2 of the decision: rules find the page's own pictures, reuse takes
+    // the best one. Only when the page carries none do we fall through to draw.
+    const reusable =
+      wantImage && skipReason === undefined
+        ? pickReusableImage(readResult.candidates ?? [])
+        : undefined;
+
+    const drawImage = wantImage && skipReason === undefined && reusable === undefined;
 
     if (mode === 'sequential' && wantSpec && wantImage && !skipReason) {
       try {
@@ -222,15 +295,17 @@ export class DefaultPipeline {
         specError = toExtractionError(error);
       }
       if (spec !== undefined && tags !== undefined) {
-        try {
-          const picked = pickVisualFacts(spec, tags, profile.subjectNoun, profile.keyMap);
-          image = hasEnoughFacts(picked, profile.minFacts)
-            ? await runImageFromSpec(spec, tags)
-            : await runImageDynamic();
-        } catch (error) {
-          imageError = toExtractionError(error);
+        if (drawImage) {
+          try {
+            const picked = pickVisualFacts(spec, tags, profile.subjectNoun, profile.keyMap);
+            image = hasEnoughFacts(picked, profile.minFacts)
+              ? await runImageFromSpec(spec, tags)
+              : await runImageDynamic();
+          } catch (error) {
+            imageError = toExtractionError(error);
+          }
         }
-      } else {
+      } else if (drawImage) {
         try {
           image = await runImageDynamic();
         } catch (error) {
@@ -252,7 +327,7 @@ export class DefaultPipeline {
           ),
         );
       }
-      if (wantImage && !skipReason) {
+      if (drawImage) {
         tasks.push(
           runImageDynamic().then(
             (result) => {
@@ -271,12 +346,23 @@ export class DefaultPipeline {
       if (specError) throw specError;
       if (imageError && wantImage && image === undefined) throw imageError;
     }
+    const picture: PictureInfo | undefined = wantImage
+      ? reusable !== undefined
+        ? { outcome: 'reused', source: reusable.source, url: reusable.url, alt: reusable.alt }
+        : image !== undefined
+          ? { outcome: 'generated' }
+          : blocker === 'refused'
+            ? { outcome: 'none' }
+            : { outcome: 'blocked' }
+      : undefined;
+    // A reused picture satisfies the image output just as a drawn one does.
+    const imageSatisfied = image !== undefined || reusable !== undefined;
     const specFailed = wantSpec && spec === undefined;
-    const imageFailed = wantImage && image === undefined && !skipReason;
-    if (specFailed && (!wantImage || image === undefined)) {
+    const imageFailed = drawImage && image === undefined;
+    if (specFailed && !imageSatisfied) {
       throw specError!;
     }
-    if (imageFailed && (!wantSpec || spec === undefined)) {
+    if (imageFailed && spec === undefined) {
       throw imageError!;
     }
 
@@ -294,6 +380,12 @@ export class DefaultPipeline {
     if (spec !== undefined) result.spec = spec;
     if (tags !== undefined && options?.tags === true) result.tags = tags;
     if (image !== undefined) result.image = image;
+    if (picture !== undefined) result.picture = picture;
+    // The full evidence behind the decision, so a caller can pick a different
+    // image than we did without re-reading the page.
+    if (readResult.candidates?.length) result.images = readResult.candidates;
+    result.cost = cost;
+    logCostSummary(cost);
     if (specError ?? imageError) {
       result.errors = {
         ...(specError ? { spec: specError } : {}),
@@ -315,15 +407,18 @@ export class DefaultPipeline {
     callOptions: CallOptions,
     text: string,
     literal: () => Promise<import('./image/facts.js').VisualFacts | undefined>,
+    metered: MeteredProvider,
   ): Promise<GeneratedImage> {
-    const grounded = await resolveGroundedFacts({
-      text,
-      profile,
-      llm: this.dependencies.llm,
-      literal,
-      ...(options?.image?.model !== undefined ? { model: options.image.model } : {}),
-      call: callOptions,
-    });
+    const grounded = await metered.withStage('image', () =>
+      resolveGroundedFacts({
+        text,
+        profile,
+        llm: metered,
+        literal,
+        ...(options?.image?.model !== undefined ? { model: options.image.model } : {}),
+        call: callOptions,
+      }),
+    );
     const model = options?.image?.model;
     const dialectId = (options?.image?.dialect ?? '') as PromptDialectId;
     const dialect =
