@@ -508,7 +508,8 @@ export function createPipeline(
 ): DefaultPipeline {
   const llm = dependencies?.llm ?? providerFrom(options);
   const validator = dependencies?.validator ?? new JsonSpecValidator();
-  const reader = dependencies?.reader ?? new DefaultReader(new NapiPdfInspector());
+  const reader =
+    dependencies?.reader ?? new DefaultReader(new NapiPdfInspector(), options?.videoSession);
   return new DefaultPipeline({
     reader,
     llm,

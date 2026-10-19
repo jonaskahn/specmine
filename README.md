@@ -46,14 +46,14 @@ const spec = await extract(new URL('https://example.com/kettle.pdf'));
 
 Each kind has a plain-English description and the module that handles it:
 
-| Kind        | What it is                                                                                                                                                        | Where it happens                           |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| text        | A string or a plain file, read as-is.                                                                                                                             | `reader.ts · read()`, `html.ts` is a no-op |
-| html        | Saved or fetched markup, converted to Markdown — tables stay as tables.                                                                                           | `html.ts · htmlToMarkdown()`               |
-| url         | A live page, fetched and converted, keeping the words and dropping the code.                                                                                      | `reader.ts · readUrl()`                    |
-| video       | A YouTube or Vimeo link. The page has no readable prose, so title, author and description are fetched from oEmbed and classified from those. No frame extraction. | `reader.ts · readUrl()`, `video.ts`        |
-| pdf         | A PDF with a real text layer.                                                                                                                                     | `napi-pdf-inspector.ts`                    |
-| scanned_pdf | A PDF that is only pictures. We stop and tell you, instead of guessing.                                                                                           | `pipeline.ts · the halt`                   |
+| Kind        | What it is                                                                                                                                                                 | Where it happens                           |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| text        | A string or a plain file, read as-is.                                                                                                                                      | `reader.ts · read()`, `html.ts` is a no-op |
+| html        | Saved or fetched markup, converted to Markdown — tables stay as tables.                                                                                                    | `html.ts · htmlToMarkdown()`               |
+| url         | A live page, fetched and converted, keeping the words and dropping the code.                                                                                               | `reader.ts · readUrl()`                    |
+| video       | A YouTube or Vimeo link. The page has no readable prose, so metadata is fetched (youtubei.js for YouTube, oEmbed for Vimeo) and classified from that. No frame extraction. | `reader.ts · readUrl()`, `video.ts`        |
+| pdf         | A PDF with a real text layer.                                                                                                                                              | `napi-pdf-inspector.ts`                    |
+| scanned_pdf | A PDF that is only pictures. We stop and tell you, instead of guessing.                                                                                                    | `pipeline.ts · the halt`                   |
 
 `reader.read()` reports which kind it saw on `ReadResult.kind`, so you can log
 or branch on it yourself.
@@ -321,6 +321,34 @@ returns the dollars.
 
 > `console.log` truncates at depth 2 and will print `calls: [Object]`. Use
 > `JSON.stringify`, or `console.dir(cost, { depth: null })` to keep the shape.
+
+### Video input
+
+A video link is read as metadata rather than as a page. YouTube goes through
+[youtubei.js](https://ytjs.dev/guide/getting-started.html), which is an
+**optional** dependency — install it to read YouTube:
+
+```sh
+npm install youtubei.js
+```
+
+Without it, YouTube falls back to oEmbed (title, author, description only) and
+Vimeo always uses oEmbed.
+
+`options.videoSession` is passed straight to `Innertube.create`, so every
+documented option works — `lang`, `location`, `cookie`, `client_type`,
+`account_index`, and the rest:
+
+```ts
+const result = await analyze(new URL('https://youtu.be/D9p6GnDe4aI'), {
+  outputs: ['spec'],
+  videoSession: { lang: 'de', location: 'DE' },
+});
+```
+
+The metadata becomes labelled text (`Duration:`, `Views:`, `Published:`,
+`Category:`, `Keywords:`) so those land as spec values. The thumbnail url is
+deliberately **not** in the text — it is offered as a picture candidate instead.
 
 ### Classification
 

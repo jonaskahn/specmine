@@ -40,6 +40,9 @@ export interface ExtractOptions extends CallOptions {
   inheritance?: boolean;
   /** also return a short list of descriptive tags alongside the specs. Default: false */
   tags?: boolean;
+  /** youtubei.js session options for video input — lang, location, cookie,
+   *  client_type, and the rest. See https://ytjs.dev/guide/getting-started.html */
+  videoSession?: Record<string, unknown>;
 }
 
 export type ExtractInput = string | Blob | URL;

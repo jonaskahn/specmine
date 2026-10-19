@@ -12,6 +12,7 @@ import type { ImageCandidate } from '../media/candidates.js';
 import type { PdfInspector } from './pdf.js';
 import { pickUserAgent } from './user-agent.js';
 import { isVideoUrl, readVideoMetadata, thumbnailCandidate, videoToText } from './video.js';
+import type { VideoSessionOptions } from './video.js';
 
 export const REMOTE_TEMP_PREFIX = 'specmine-remote-';
 
@@ -42,7 +43,11 @@ function fromMarkdown(raw: string, baseUrl: string | undefined): ReadResult {
 }
 
 export class DefaultReader implements InputReader {
-  constructor(private readonly pdfInspector?: PdfInspector) {}
+  constructor(
+    private readonly pdfInspector?: PdfInspector,
+    /** youtubei.js session options; see https://ytjs.dev/guide/getting-started.html */
+    private readonly videoSession?: VideoSessionOptions,
+  ) {}
 
   async read(input: ExtractInput): Promise<ReadResult> {
     if (typeof input === 'string') {
@@ -59,7 +64,7 @@ export class DefaultReader implements InputReader {
       return this.readBlob(new Blob([await readFile(fileURLToPath(url))]));
     }
     if (isVideoUrl(url)) {
-      const metadata = await readVideoMetadata(url);
+      const metadata = await readVideoMetadata(url, this.videoSession);
       const text = videoToText(metadata);
       return {
         text,

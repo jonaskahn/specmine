@@ -27,8 +27,14 @@ export { createExtractor, DefaultExtractor, extract, extractTags } from './extra
 export type { InputKind, InputReader, ReadResult } from './input/reader.js';
 export { DefaultReader } from './input/reader.js';
 export type { PdfClassification, PdfExtraction, PdfInspector, PdfType } from './input/pdf.js';
-export type { VideoMetadata } from './input/video.js';
-export { isVideoUrl, thumbnailCandidate, videoToText } from './input/video.js';
+export type { VideoMetadata, VideoSessionOptions } from './input/video.js';
+export {
+  EMPTY_VIDEO_METADATA,
+  isVideoUrl,
+  readVideoMetadata,
+  thumbnailCandidate,
+  videoToText,
+} from './input/video.js';
 export { NapiPdfInspector } from './input/napi-pdf-inspector.js';
 export type {
   LlmContentPart,
