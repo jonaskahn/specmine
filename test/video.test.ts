@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { DefaultReader } from '../src/input/reader.js';
 import {
   EMPTY_VIDEO_METADATA,
+  MAX_TRANSCRIPT_CHARS,
   fromInnertube,
   isVideoUrl,
   VIDEO_HOSTS,
@@ -10,6 +11,7 @@ import {
   videoIdOf,
   videoToText,
 } from '../src/input/video.js';
+import type { VideoInfoSource } from '../src/input/video.js';
 import { ExtractionError } from '../src/errors.js';
 
 test('recognises video hosts only over http(s)', () => {
@@ -247,7 +249,7 @@ test('youtube metadata is preferred over oEmbed when youtubei.js answers', async
       async (session) => {
         assert.deepEqual(session, { lang: 'de', cookie: 'x' });
         return {
-          getInfo: async (id: string) => {
+          getBasicInfo: async (id: string) => {
             assert.equal(id, 'D9p6GnDe4aI');
             return { basic_info: { title: 'From Innertube', duration: 60 } };
           },
@@ -270,7 +272,7 @@ test('an empty innertube answer falls back to oEmbed', async () => {
     const metadata = await readVideoMetadata(
       new URL('https://www.youtube.com/watch?v=D9p6GnDe4aI'),
       undefined,
-      async () => ({ getInfo: async () => undefined }),
+      async () => ({ getBasicInfo: async () => undefined }),
     );
     assert.equal(metadata.title, 'From oEmbed');
     assert.equal(metadata.thumbnail, 'https://img.example.com/t.jpg');
@@ -333,4 +335,95 @@ test('a full ISO publish timestamp is reduced to its date', () => {
 test('a non-ISO publish value is left as stated', () => {
   const text = videoToText({ ...EMPTY_VIDEO_METADATA, title: 'T', publishedAt: 'October 2026' });
   assert.match(text, /Published: October 2026/);
+});
+
+function withTranscript(segments: unknown, ok = true): VideoInfoSource {
+  return {
+    getBasicInfo: async () => ({
+      basic_info: { title: 'T' },
+      getTranscript: async () => {
+        if (!ok) throw new Error('transcript endpoint 400');
+        return { transcript: { content: { body: { initial_segments: segments } } } };
+      },
+    }),
+  };
+}
+
+test('caption segments are joined into the video text', async () => {
+  const metadata = await readVideoMetadata(
+    new URL('https://www.youtube.com/watch?v=D9p6GnDe4aI'),
+    undefined,
+    async () =>
+      withTranscript([
+        { snippet: { text: 'first line' } },
+        { snippet: { text: '  ' } },
+        { snippet: { text: 'second line' } },
+        {},
+      ]),
+  );
+  assert.equal(metadata.transcript, 'first line second line');
+  assert.match(videoToText(metadata), /## Transcript\n\nfirst line second line/);
+});
+
+test('a missing or malformed transcript yields empty text, not a failure', async () => {
+  for (const segments of [undefined, null, 'nope'] as unknown[]) {
+    const metadata = await readVideoMetadata(
+      new URL('https://www.youtube.com/watch?v=D9p6GnDe4aI'),
+      undefined,
+      async () => withTranscript(segments),
+    );
+    assert.equal(metadata.transcript, '');
+    assert.doesNotMatch(videoToText(metadata), /## Transcript/);
+  }
+});
+
+test('a transcript that throws degrades to metadata only', async () => {
+  const metadata = await readVideoMetadata(
+    new URL('https://www.youtube.com/watch?v=D9p6GnDe4aI'),
+    undefined,
+    async () => withTranscript([], false),
+  );
+  assert.equal(metadata.title, 'T');
+  assert.equal(metadata.transcript, '');
+});
+
+test('a source with no transcript method is tolerated', async () => {
+  const metadata = await readVideoMetadata(
+    new URL('https://www.youtube.com/watch?v=D9p6GnDe4aI'),
+    undefined,
+    async () => ({ getBasicInfo: async () => ({ basic_info: { title: 'T' } }) }),
+  );
+  assert.equal(metadata.transcript, '');
+});
+
+test('a long transcript is capped and marked as truncated', () => {
+  const text = videoToText({
+    ...EMPTY_VIDEO_METADATA,
+    title: 'T',
+    transcript: 'x'.repeat(MAX_TRANSCRIPT_CHARS + 500),
+  });
+  assert.match(text, /## Transcript \(truncated\)/);
+  assert.ok(text.length < MAX_TRANSCRIPT_CHARS + 1000);
+});
+
+test('a transcript that fits is not marked truncated', () => {
+  const text = videoToText({ ...EMPTY_VIDEO_METADATA, title: 'T', transcript: 'short' });
+  assert.match(text, /## Transcript\n/);
+  assert.doesNotMatch(text, /truncated/);
+});
+
+test('a non-error transcript rejection is also handled', async () => {
+  const metadata = await readVideoMetadata(
+    new URL('https://www.youtube.com/watch?v=D9p6GnDe4aI'),
+    undefined,
+    async () => ({
+      getBasicInfo: async () => ({
+        basic_info: { title: 'T' },
+        getTranscript: async () => {
+          throw 'plain string failure';
+        },
+      }),
+    }),
+  );
+  assert.equal(metadata.transcript, '');
 });

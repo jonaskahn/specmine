@@ -41,13 +41,14 @@ const GROUNDING_BLOCK = `Grounding:
  * the video path extracts the video's own stated facts instead.
  */
 const VIDEO_FACTS_TASK =
-  'Task: extract the factual attributes this content explicitly states — for a video: its title, channel, duration, views, publish date and category, plus any product, place, company or event the description names concretely with its stated attributes. Never infer, assume or fabricate.';
+  'Task: extract the factual attributes this content explicitly states — for a video: its title, channel, duration, views, publish date and category, plus every product, place, company, person or event named in the transcript or description, with their stated attributes. Never infer, assume or fabricate.';
 
-const VIDEO_FACTS_BLOCK = `This content is a video's metadata and description, not a product page.
+const VIDEO_FACTS_BLOCK = `This content is a video's metadata, description and caption transcript, not a product page.
 - The labelled leading lines (Channel, Duration, Views, Published, Category, Keywords) are the video's own stated facts: extract each one whose value is non-empty, under a key describing what it is.
-- Then read the description for concrete things it names — a product with stated attributes, a location, a company, a dated event — and extract only their explicitly stated attributes.
+- The Transcript section is what was actually said. Mine it for concrete things named with stated attributes — a product and its specs, a place, a company, a dated event, a person and their role — and extract only what the words actually state.
+- The description is written by the uploader and may promote or link elsewhere: treat its claims as stated only when it states them plainly.
 - The title names the video; it is context, never a key.
-- Narrative, opinion and calls to action are not facts.
+- Narrative, opinion, speculation and calls to action are not facts. Someone saying a thing might happen, or wishing it would, is not a specification.
 - Keywords are a comma list: when you do include them, keep the list intact as one value, never split into one key per keyword.`;
 
 const SPEC_OUTPUT_SHAPE = `Output shape — a single flat-or-nested JSON object, no wrapper key:

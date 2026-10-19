@@ -2,6 +2,10 @@ import { ExtractionError } from '../errors.js';
 import { THUMBNAIL_SCORE, type ImageCandidate } from '../media/candidates.js';
 import { logger } from '../log.js';
 
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Hosts whose pages carry no readable prose, so metadata is the only sane way to
  * read them.
@@ -28,6 +32,8 @@ export interface VideoMetadata {
   keywords: string[];
   category: string;
   isLive: boolean;
+  /** caption text, empty when the video has no transcript or it could not be read */
+  transcript: string;
 }
 
 export const EMPTY_VIDEO_METADATA: VideoMetadata = {
@@ -41,6 +47,7 @@ export const EMPTY_VIDEO_METADATA: VideoMetadata = {
   keywords: [],
   category: '',
   isLive: false,
+  transcript: '',
 };
 
 export function isVideoUrl(url: URL): boolean {
@@ -114,9 +121,49 @@ export function fromInnertube(info: InnertubeVideo | undefined): VideoMetadata |
  */
 export type VideoSessionOptions = Record<string, unknown>;
 
-/** The slice of youtubei.js this module actually uses. */
+/**
+ * The slice of youtubei.js this module actually uses. `getBasicInfo` is
+ * deliberate rather than `getInfo`: it fetches only videoDetails, skipping the
+ * engagement panels whose markup YouTube changes often enough to make the
+ * parser log type mismatches. Same metadata, no noise.
+ *
+ * The optional `getTranscript` is what captions need; youtubei.js always
+ * provides it on a real session, but a stand-in may not.
+ */
 export interface VideoInfoSource {
-  getInfo(videoId: string): Promise<unknown>;
+  getBasicInfo(videoId: string): Promise<unknown>;
+}
+
+/** A caption cue as youtubei.js hands it over. */
+interface TranscriptSegment {
+  snippet?: { text?: string };
+}
+
+/**
+ * Captions are the video's actual content. YouTube refuses the transcript
+ * endpoint for plenty of ordinary videos (no captions, age or region gates,
+ * bot detection), so a failure here degrades to metadata-only rather than
+ * failing the whole read.
+ */
+async function readTranscript(info: unknown): Promise<string> {
+  try {
+    const transcript = await (
+      info as { getTranscript?: () => Promise<unknown> }
+    )?.getTranscript?.();
+    const segments = (
+      transcript as {
+        transcript?: { content?: { body?: { initial_segments?: TranscriptSegment[] } } };
+      }
+    )?.transcript?.content?.body?.initial_segments;
+    if (!Array.isArray(segments)) return '';
+    return segments
+      .map((segment) => segment.snippet?.text?.trim() ?? '')
+      .filter((line) => line.length > 0)
+      .join(' ');
+  } catch (error) {
+    logger().debug('Video transcript unavailable', { error: messageOf(error) });
+    return '';
+  }
 }
 
 /** Builds a session; `undefined` means "youtubei.js is not installed". */
@@ -134,7 +181,10 @@ const defaultInnertubeFactory: InnertubeFactory = async (session) => {
     return undefined;
   }
   // Generating locally avoids a round trip to YouTube just to make a session.
-  return Innertube.create({ generate_session_locally: true, ...session });
+  return Innertube.create({
+    generate_session_locally: true,
+    ...session,
+  }) as Promise<VideoInfoSource>;
 };
 /* c8 ignore stop */
 
@@ -147,7 +197,11 @@ async function readYouTubeInfo(
   if (!videoId) return undefined;
   const innertube = await factory(session);
   if (!innertube) return undefined;
-  return fromInnertube((await innertube.getInfo(videoId)) as InnertubeVideo | undefined);
+  const info = await innertube.getBasicInfo(videoId);
+  const metadata = fromInnertube(info as InnertubeVideo | undefined);
+  if (!metadata) return undefined;
+  const transcript = await readTranscript(info);
+  return transcript.length > 0 ? { ...metadata, transcript } : metadata;
 }
 
 function oembedEndpoint(url: URL): string {
@@ -214,6 +268,8 @@ function toDateOnly(value: string): string {
   return /^\d{4}-\d{2}-\d{2}T/.test(value) ? value.slice(0, 10) : value;
 }
 
+export const MAX_TRANSCRIPT_CHARS = 20_000;
+
 /**
  * Render metadata as the text the classifier reads. Facts are labelled so they
  * land as spec values; the thumbnail url is deliberately left out, since a bare
@@ -232,6 +288,11 @@ export function videoToText(metadata: VideoMetadata): string {
   if (metadata.category) lines.push(`Category: ${metadata.category}`);
   if (metadata.description) lines.push('', '## Description', '', metadata.description);
   if (metadata.keywords.length > 0) lines.push('', `Keywords: ${metadata.keywords.join(', ')}`);
+  if (metadata.transcript) {
+    const transcript = metadata.transcript.slice(0, MAX_TRANSCRIPT_CHARS);
+    const truncated = transcript.length < metadata.transcript.length ? ' (truncated)' : '';
+    lines.push('', `## Transcript${truncated}`, '', transcript);
+  }
   return lines.join('\n');
 }
 

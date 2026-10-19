@@ -332,6 +332,16 @@ A video link is read as metadata rather than as a page. YouTube goes through
 npm install youtubei.js
 ```
 
+Captions are fetched too, via `getBasicInfo(...).getTranscript()`, and joined
+into a `## Transcript` section (capped at `MAX_TRANSCRIPT_CHARS`, marked
+`(truncated)` when clipped). Many videos have no captions, and YouTube refuses
+the transcript endpoint for some of those that do — when that happens the read
+falls back to metadata only rather than failing.
+
+`getBasicInfo` is used rather than `getInfo` on purpose: it skips the
+engagement panels whose markup YouTube changes often enough that `getInfo` logs
+parser type-mismatch errors. The metadata is identical and the noise is gone.
+
 Without it, YouTube falls back to oEmbed (title, author, description only) and
 Vimeo always uses oEmbed.
 

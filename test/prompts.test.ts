@@ -75,8 +75,9 @@ test('taskLine covers every mode with and without a profile', () => {
 
 test('a video source is asked for its own facts, not for a product', () => {
   const prompt = buildSystemPrompt('en', 'specs', undefined, true);
-  assert.match(prompt, /video's metadata and description, not a product page/);
+  assert.match(prompt, /video's metadata, description and caption transcript/);
   assert.match(prompt, /duration, views, publish date and category/);
+  assert.match(prompt, /Transcript section is what was actually said/);
   // The product-isolation instruction would produce an empty object here.
   assert.doesNotMatch(prompt, /Isolate the single/);
   assert.doesNotMatch(prompt, /unusual snake_case/);
@@ -91,7 +92,7 @@ test('the video prompt keeps key discipline and the output shape', () => {
 
 test('a video tags-only run skips the spec instructions', () => {
   const prompt = buildSystemPrompt('en', 'tags-only', undefined, true);
-  assert.match(prompt, /video's metadata and description/);
+  assert.match(prompt, /video's metadata, description and caption transcript/);
   assert.doesNotMatch(prompt, /Output shape/);
 });
 
