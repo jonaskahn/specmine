@@ -48,12 +48,15 @@
     "format": "prettier --write \"**/*.{js,ts,mjs,cjs}\"",
     "format:check": "prettier --check \"**/*.{js,ts,mjs,cjs}\"",
     "test": "SPECMINE_LOG_LEVEL=silent tsx --test test/*.test.ts",
+    "test:cdp": "SPECMINE_LOG_LEVEL=silent tsx --test test/cdp.test.ts test/cdp-live.test.ts",
+    "example:cdp": "SPECMINE_LOG_LEVEL=silent tsx examples/cdp.ts",
     "coverage": "SPECMINE_LOG_LEVEL=silent c8 --include src --reporter=text --check-coverage --statements 100 --branches 100 --functions 100 --lines 100 node --import tsx --test test/*.test.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.2.0",
     "@types/turndown": "^5.0.6",
+    "@types/ws": "^8.18.2",
     "c8": "^12.0.0",
     "dotenv": "^17.4.2",
     "eslint": "^10.8.1",
@@ -72,6 +75,8 @@
     "turndown-plugin-gfm": "^1.0.2"
   },
   "optionalDependencies": {
+    "puppeteer-core": "^24.43.1",
+    "ws": "^8.22.0",
     "youtubei.js": "^18.2.0"
   },
   "allowScripts": {

@@ -105,6 +105,89 @@ tag-heavy product pages still produce clean specs:
 const spec = await extract(new URL('https://example.com/products/kettle'));
 ```
 
+### Rendered HTML over CDP (Obscura or Chromium)
+
+Connect to an existing Chrome DevTools Protocol server when a page needs
+JavaScript to load its content. For [Obscura](https://github.com/h4ckf0r0day/obscura),
+start the server first:
+
+```sh
+obscura serve --port 9222
+```
+
+Then pass a CDP connection alongside the page URL:
+
+```ts
+import { extract, analyze } from '@jonaskahn/specmine';
+
+const cdp = {
+  endpoint: 'ws://127.0.0.1:9222/devtools/browser',
+  waitUntil: 'networkidle2' as const,
+  waitForSelector: '#specifications', // optional; choose a selector on your page
+  timeoutMs: 60_000,
+};
+
+const spec = await extract(new URL('https://example.com/products/kettle'), { cdp });
+const result = await analyze(new URL('https://example.com/products/kettle'), { cdp });
+```
+
+The same per-call option works with `createExtractor().extract()`,
+`extractTags()`, and the image helpers. A default can also be set using
+`createPipeline(undefined, { cdp })`. URLs must be `URL` objects;
+strings remain text input.
+
+| Option | Description |
+| --- | --- |
+| `endpoint` | Required. `ws://` or `wss://` browser endpoint, or an `http://` / `https://` browser URL discovered through `/json/version`. Use the exact browser WebSocket URL advertised by Chromium. |
+| `headers` | Headers for the CDP WebSocket and HTTP discovery requests. For Obscura token authentication, set `{ Authorization: 'Bearer YOUR_TOKEN' }`. These are not page request headers. |
+| `waitUntil` | `load`, `domcontentloaded`, `networkidle0`, or `networkidle2` (default). |
+| `waitForSelector` | Optional CSS selector to wait for after navigation. |
+| `timeoutMs` | Total browser read deadline, including connection, navigation, selector waiting, and cleanup. Defaults to the call's `timeoutMs` or 30 seconds. Must be positive and finite. |
+
+CDP uses the optional `puppeteer-core` and `ws` dependencies and does not download a
+browser. If optional dependencies were omitted, install it with
+`npm install puppeteer-core@24 ws@8`. Specmine creates one tab per read, captures
+its rendered HTML, closes the tab, and disconnects while leaving the browser
+server running. The HTML follows the existing Markdown, metadata, and image
+candidate extraction path; relative image URLs use the final page URL after
+redirects. The call's `signal` cancels the browser read with `TIMEOUT`.
+
+Without `cdp`, HTTP(S) URLs continue to use native fetch. Video URLs keep
+their dedicated metadata/transcript reader. CDP is for HTML pages; read PDF
+URLs without `cdp`. Form submission and login automation are not performed
+by this option. Rendering and available browser APIs depend on the CDP server.
+
+#### CDP tests and ten sample URLs
+
+Run the deterministic CDP tests with `npm run test:cdp`. Live integration
+tests are skipped unless `SPECMINE_CDP_ENDPOINT` is set. To include them,
+start Obscura with access to the tests' local HTTP server:
+
+```sh
+obscura serve --port 9222 --allow-private-network
+SPECMINE_CDP_ENDPOINT=ws://127.0.0.1:9222/devtools/browser npm run test:cdp
+```
+
+The live integration tests exercise JavaScript rendering, redirects, selector
+waiting, metadata, relative image URLs, extraction, pipeline defaults, HTTP
+errors, timeouts, and cancellation against a local page. LLM responses are
+stubbed, so these checks do not need an API key. Existing browser servers must
+also allow requests to loopback for these local tests.
+
+`examples/cdp-links.ts` contains ten sample product pages: five US pages
+and five German pages. Read all ten through CDP with:
+
+```sh
+SPECMINE_CDP_ENDPOINT=ws://127.0.0.1:9222/devtools/browser npm run example:cdp
+```
+
+The runner emits one JSON record per URL and a final count, and exits with a
+nonzero status when any page fails. It checks for nonempty text and an expected
+product name; it does not validate LLM specification accuracy. Set
+`OBSCURA_CDP_TOKEN` when the server needs bearer authentication. Third-party
+pages can change, block automation, or render incompletely, so these checks
+remain separate from the default test suite.
+
 ### HTML input
 
 HTML strings and blobs are detected and converted to Markdown automatically:

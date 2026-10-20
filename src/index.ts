@@ -1,6 +1,7 @@
 export type {
   AbsentImage,
   CallOptions,
+  CdpOptions,
   CategoryInfo,
   ClassifierConfig,
   ExtractedImage,
@@ -20,6 +21,7 @@ export type {
   ProcessOptions,
   ProcessResult,
   ProductSpec,
+  ReadOptions,
   SpecsResult,
   TaggedResult,
   TagsResult,

@@ -156,7 +156,7 @@ export class DefaultExtractor implements Extractor {
     profile?: ResolvedProfile,
   ): Promise<{ spec: SpecsResult; tags: TagsResult }> {
     const log = logger();
-    const readResult = await this.dependencies.reader.read(input);
+    const readResult = await this.dependencies.reader.read(input, options);
     const text = readResult.text.trim();
     if (readResult.imageOnly) {
       log.warn('Input is image only, returning empty result');

@@ -187,7 +187,7 @@ export class DefaultPipeline {
     const wantImage = outputs.includes('image');
     const mode = options?.mode ?? 'parallel';
     const callOptions = callOptionsOf(options);
-    const readResult = await this.dependencies.reader.read(input);
+    const readResult = await this.dependencies.reader.read(input, options);
     const text = readResult.text.trim();
     if (!text) {
       throw new ExtractionError('EMPTY_INPUT', 'Input is empty');
@@ -618,7 +618,12 @@ export function createPipeline(
   const validator = dependencies?.validator ?? new JsonSpecValidator();
   const reader =
     dependencies?.reader ??
-    new DefaultReader(new NapiPdfInspector(), options?.videoSession, options?.videoTranscriptMs);
+    new DefaultReader(
+      new NapiPdfInspector(),
+      options?.videoSession,
+      options?.videoTranscriptMs,
+      options?.cdp,
+    );
   return new DefaultPipeline({
     reader,
     llm,

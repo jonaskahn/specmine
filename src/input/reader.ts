@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ExtractionError } from '../errors.js';
 import { logger } from '../log.js';
-import type { ExtractInput } from '../types.js';
+import type { CdpOptions, ExtractInput, ReadOptions } from '../types.js';
+import { readCdpHtml } from './cdp.js';
 import { htmlToMarkdown } from './html.js';
 import { extractImageCandidates, extractPageMeta } from '../media/candidates.js';
 import type { ImageCandidate } from '../media/candidates.js';
@@ -34,7 +35,7 @@ export interface ReadResult {
 }
 
 export interface InputReader {
-  read(input: ExtractInput): Promise<ReadResult>;
+  read(input: ExtractInput, options?: ReadOptions): Promise<ReadResult>;
 }
 
 /**
@@ -62,19 +63,21 @@ export class DefaultReader implements InputReader {
     private readonly videoSession?: VideoSessionOptions,
     /** how long a caption fetch may take before the read settles for metadata alone */
     private readonly videoTranscriptMs?: number,
+    /** Default browser connection; individual reads may override it. */
+    private readonly cdp?: CdpOptions,
   ) {}
 
-  async read(input: ExtractInput): Promise<ReadResult> {
+  async read(input: ExtractInput, options?: ReadOptions): Promise<ReadResult> {
     if (typeof input === 'string') {
       return fromMarkdown(input, undefined);
     }
     if (input instanceof URL) {
-      return this.readUrl(input);
+      return this.readUrl(input, options);
     }
     return this.readBlob(input);
   }
 
-  private async readUrl(url: URL): Promise<ReadResult> {
+  private async readUrl(url: URL, options?: ReadOptions): Promise<ReadResult> {
     if (url.protocol === 'file:') {
       return this.readBlob(new Blob([await readFile(fileURLToPath(url))]));
     }
@@ -96,6 +99,11 @@ export class DefaultReader implements InputReader {
       };
     }
     if (url.protocol === 'http:' || url.protocol === 'https:') {
+      const cdp = options?.cdp ?? this.cdp;
+      if (cdp) {
+        const rendered = await readCdpHtml(url, cdp, options);
+        return fromMarkdown(rendered.html, rendered.url);
+      }
       const response = await fetch(url, { headers: { 'User-Agent': pickUserAgent() } });
       if (!response.ok) {
         throw new ExtractionError('LLM_ERROR', `Failed to fetch ${url}: ${response.status}`);

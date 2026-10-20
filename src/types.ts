@@ -30,7 +30,25 @@ export interface CallOptions {
   signal?: AbortSignal;
 }
 
-export interface ExtractOptions extends CallOptions {
+export interface CdpOptions {
+  /** WebSocket CDP endpoint, or an HTTP(S) browser discovery URL. */
+  endpoint: string;
+  /** CDP connection/discovery headers, e.g. Authorization for Obscura. */
+  headers?: Record<string, string>;
+  /** Total browser read deadline in ms. Default: timeoutMs from the call, or 30_000. */
+  timeoutMs?: number;
+  /** Navigation readiness. Default: 'networkidle2'. */
+  waitUntil?: 'load' | 'domcontentloaded' | 'networkidle0' | 'networkidle2';
+  /** Wait for this CSS selector after navigation, before capturing HTML. */
+  waitForSelector?: string;
+}
+
+export interface ReadOptions extends CallOptions {
+  /** Render HTTP(S) pages through an existing Obscura/Chromium CDP server. */
+  cdp?: CdpOptions;
+}
+
+export interface ExtractOptions extends ReadOptions {
   provider?: string;
   model?: string;
   apiKey?: string;
